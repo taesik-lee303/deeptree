@@ -1,0 +1,16 @@
+[Unit]
+Description=DeepCare MQTT→Kafka Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/deepcare-edge
+EnvironmentFile=/opt/deepcare-edge/.env
+ExecStart=/usr/bin/python3 /opt/deepcare-edge/pipelines/kafka/producers/mqtt_to_kafka.py
+Restart=always
+RestartSec=2
+User=pi
+
+[Install]
+WantedBy=multi-user.target

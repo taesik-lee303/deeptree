@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sensor-events v1",
+  "type": "object",
+  "required": ["device_id", "ts", "sensors"],
+  "properties": {
+    "device_id": { "type": "string", "minLength": 1 },
+    "ts": { "type": "string", "format": "date-time" },
+    "sensors": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "noise": { "type": "number" },
+        "pir":   { "oneOf": [ { "type": "integer" }, { "type": "boolean" } ] },
+        "temp":  { "type": "number" },
+        "humid": { "type": "number" },
+        "pm25":  { "type": "number" },
+        "pm10":  { "type": "number" },
+        "pm1":   { "type": "number" },
+        "extra": { "type": "object" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

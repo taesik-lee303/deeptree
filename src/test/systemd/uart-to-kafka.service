@@ -1,0 +1,16 @@
+[Unit]
+Description=DeepCare UART→Kafka Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/test
+EnvironmentFile=/opt/test/.env
+ExecStart=/usr/bin/python3 /opt/test/pipelines/kafka/producers/uart_to_kafka.py
+Restart=always
+RestartSec=2
+User=pi
+
+[Install]
+WantedBy=multi-user.target

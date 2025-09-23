@@ -1,0 +1,9 @@
+kafka-python==2.0.2
+pyserial==3.5
+pyyaml==6.0.2
+jsonschema==4.23.0
+python-dotenv==1.0.1
+tenacity==9.0.0
+paho-mqtt==1.6.1
+fastapi==0.115.0
+uvicorn==0.30.6
