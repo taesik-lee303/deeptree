@@ -16,7 +16,8 @@ import sounddevice as sd
 from typing import Dict, Any, Optional, List, Callable, Union
 from datetime import datetime
 import numpy as np
-
+from networks.kafka.kafka_producer import KafkaProducerClient
+from networks.kafka.kafka_config import emotion_settings
 # 상위 디렉토리에서 config import
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from config import get_config, ServerConfig
@@ -485,6 +486,7 @@ class ConversationManager:
             self.local_command_handler = LocalCommandHandler(self.tts)
 
         self.logger = get_logger(self.__class__.__name__)
+        self.kafka = KafkaProducerClient(emotion_settings) if emotion_settings.enabled else None
 
     def start_conversation(self):
         """대화 시작"""
@@ -571,6 +573,9 @@ class ConversationManager:
         def process_ai_response():
             try:
                 emotion = getattr(self, "_detect_emotion_from_text", lambda _: "neutral")(text)
+
+                self._emit_emotion(emotion)
+                
                 resp = self.ai_client.send_chat_request(text, emotion) if self.ai_client else None
                 self._ai_done.set()
 
@@ -596,6 +601,17 @@ class ConversationManager:
 
         # 3) 필러 TTS를 '병렬'로 시작 (초고속 응답이면 defer 동안 생략됨)
         self._start_filler_parallel(defer_ms=150)
+
+        # 4) 감정 이벤트 카프카 전송
+    def _emit_emotion(self, emotion: str):
+        """대화 텍스트는 전송하지 않고, 감정 라벨만 카프카로 보냄"""
+        try:
+            if getattr(self, "kafka", None):
+                self.kafka.send_emotion(emotion)
+        except Exception as e:
+            self.logger.error(f"Kafka emotion emit error: {e}")
+   
+
 
     # --- 병렬 제어용 이벤트/스레드 핸들 (턴마다 새로 세팅) ---
     # self._ai_done, self._filler_done, self._filler_thread  는 _handle_speech_input 시작부에서 매 턴 초기화합니다.
