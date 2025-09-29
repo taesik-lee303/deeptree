@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 try:
-    from src.networks.kafka import KafkaConsumer
+    from kafka import KafkaConsumer
 except Exception as exc:  # pragma: no cover
     KafkaConsumer = None  # type: ignore
     _KAFKA_IMPORT_ERROR = exc
@@ -35,6 +35,9 @@ except Exception as exc:  # pragma: no cover
 else:
     _PILLOW_IMPORT_ERROR = None
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from networks.kafka.kafka_config import settings
 
 
