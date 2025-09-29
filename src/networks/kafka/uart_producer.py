@@ -55,7 +55,7 @@ class UartKafkaProducer:
         try:
             self.producer = KafkaProducer(
                 value_serializer=lambda payload: json.dumps(payload).encode(settings.value_encoding),
-                **settings.kafka_kwargs,
+                **settings.producer_kwargs,
             )
         except Exception as exc:
             raise RuntimeError(f"Kafka Producer 생성 실패: {exc}") from exc

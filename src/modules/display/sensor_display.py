@@ -460,12 +460,16 @@ class KafkaSensorStream:
 
     def _run(self) -> None:
         try:
+            print(f"[Kafka] 연결 시도 중... servers: {settings.bootstrap_servers}")
             consumer = KafkaConsumer(
                 enable_auto_commit=True,
                 value_deserializer=lambda v: v.decode(settings.value_encoding, "ignore"),
+                consumer_timeout_ms=1000,  # 연결 타임아웃 추가
                 **settings.kafka_kwargs,
             )
+            print(f"[Kafka] 소비자 생성 완료")
             consumer.subscribe([settings.sensor_topic])
+            print(f"[Kafka] 토픽 구독 완료: {settings.sensor_topic}")
             if self.debug:
                 print(f"[Kafka] 토픽 구독: {settings.sensor_topic}")
         except Exception as exc:
@@ -474,30 +478,38 @@ class KafkaSensorStream:
 
         while not self._stop_evt.is_set():
             try:
+                print("[Kafka] Polling for messages...")
                 records = consumer.poll(timeout_ms=500)
+                if records:
+                    print(f"[Kafka] Received {sum(len(msgs) for msgs in records.values())} messages")
             except Exception as exc:
                 print(f"[Kafka] poll 실패: {exc}")
                 time.sleep(1.0)
                 continue
             if not records:
+                print("[Kafka] No messages received, continuing...")
                 continue
             for messages in records.values():
                 for message in messages:
                     raw_value = message.value
+                    print(f"[Kafka] Processing message: {raw_value[:100]}...")
                     try:
                         payload = json.loads(raw_value)
+                        print(f"[Kafka] Parsed payload keys: {list(payload.keys())}")
                     except Exception as exc:
                         if self.debug:
                             print(f"[Kafka] JSON 파싱 실패: {exc} :: {raw_value!r}")
                         continue
                     snapshot = _snapshot_from_payload(payload)
                     if snapshot is None:
-                        if self.debug:
-                            print(f"[Kafka] 지원하지 않는 페이로드: {payload}")
+                        print(f"[Kafka] 지원하지 않는 페이로드: {payload}")
                         continue
+                    print(f"[Kafka] Created snapshot: temp={snapshot.temp_c}, hum={snapshot.hum}")
                     snapshot.raw = payload
                     snapshot.ingested_at = time.time()
+                    print("[Kafka] Publishing snapshot to queue...")
                     self._publish(snapshot)
+                    print("[Kafka] Snapshot published successfully")
         try:
             consumer.close()
         except Exception:
@@ -533,6 +545,9 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    print(f"[Main] 시작 - 디버그 모드: {args.debug}")
+    print(f"[Main] Kafka 설정: {settings.bootstrap_servers} / {settings.sensor_topic}")
+
     refresh_hz = args.refresh_hz if args.refresh_hz > 0 else 1.0
     refresh_period = 1.0 / refresh_hz
 
@@ -544,7 +559,8 @@ def main() -> None:
     )
 
     out_queue: queue.Queue[SensorSnapshot] = queue.Queue(maxsize=16)
-    stream = KafkaSensorStream(out_queue, debug=args.debug)
+    stream = KafkaSensorStream(out_queue, debug=True)  # 강제로 디버그 활성화
+    print("[Main] 카프카 스트림 시작...")
     stream.start()
 
     latest = SensorSnapshot()
@@ -554,21 +570,22 @@ def main() -> None:
         while True:
             timeout = max(0.0, next_frame - time.time())
             try:
+                print("[Main] Waiting for snapshot from queue...")
                 snapshot = out_queue.get(timeout=timeout if timeout > 0 else 0.01)
                 latest = snapshot
-                if args.debug:
-                    print(
-                        f"[Kafka] 업데이트: device={snapshot.device_id} "
-                        f"temp={snapshot.temp_c} hum={snapshot.hum} noise={snapshot.noise}"
-                    )
+                print(f"[Main] 업데이트: device={snapshot.device_id} temp={snapshot.temp_c} hum={snapshot.hum}")
             except queue.Empty:
+                print("[Main] Queue timeout, no new data")
                 pass
 
             now = time.time()
             if now >= next_frame:
+                print("[Main] Rendering frame...")
                 image = display.render(latest)
+                print("[Main] Presenting image...")
                 display.present(image)
                 next_frame = now + refresh_period
+                print("[Main] Frame completed")
     except KeyboardInterrupt:
         pass
     finally:
