@@ -35,6 +35,19 @@ except Exception as exc:  # pragma: no cover
 else:
     _PILLOW_IMPORT_ERROR = None
 
+# 디스플레이를 위한 Tkinter 임포트
+try:
+    import tkinter as tk
+    from tkinter import Label
+    from PIL import ImageTk
+except Exception as exc:  # pragma: no cover
+    tk = None  # type: ignore
+    Label = None  # type: ignore
+    ImageTk = None  # type: ignore
+    _TKINTER_IMPORT_ERROR = exc
+else:
+    _TKINTER_IMPORT_ERROR = None
+
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -212,6 +225,32 @@ def _format_age(age_seconds: float) -> str:
     return f"+{minutes}m{seconds:02d}s"
 
 
+class TkinterDisplayDriver:
+    def __init__(self, diameter: int):
+        if tk is None or ImageTk is None:
+            raise RuntimeError(f"Tkinter import 실패: {_TKINTER_IMPORT_ERROR}")
+        self.diameter = diameter
+        self.root = tk.Tk()
+        self.root.title("Sensor Display")
+        self.root.geometry(f"{diameter + 20}x{diameter + 50}")
+        self.root.configure(bg="black")
+
+        self.label = Label(self.root, bg="black")
+        self.label.pack(pady=10)
+
+        # 창을 맨 앞으로 가져오기
+        self.root.lift()
+        self.root.attributes('-topmost', True)
+        self.root.after_idle(lambda: self.root.attributes('-topmost', False))
+
+    def display(self, image: Image.Image):
+        # PIL 이미지를 Tkinter가 사용할 수 있는 형태로 변환
+        photo = ImageTk.PhotoImage(image)
+        self.label.configure(image=photo)
+        self.label.image = photo  # 참조 유지
+        self.root.update()
+
+
 class CircularSensorDisplay:
     def __init__(
         self,
@@ -220,12 +259,24 @@ class CircularSensorDisplay:
         font_path: str | None = None,
         dump_dir: Path | None = None,
         driver: Any | None = None,
+        use_tkinter: bool = True,
     ) -> None:
         if Image is None or ImageDraw is None or ImageFont is None:
             raise RuntimeError(f"Pillow import 실패: {_PILLOW_IMPORT_ERROR}")
         self.diameter = diameter
         self.center = diameter / 2.0
-        self.driver = driver
+
+        # 드라이버가 제공되지 않고 use_tkinter가 True면 Tkinter 드라이버 생성
+        if driver is None and use_tkinter:
+            try:
+                self.driver = TkinterDisplayDriver(diameter)
+                print("[Display] Tkinter 디스플레이 드라이버 초기화 완료")
+            except RuntimeError as e:
+                print(f"[Display] Tkinter 드라이버 실패: {e}")
+                self.driver = None
+        else:
+            self.driver = driver
+
         self.dump_dir = Path(dump_dir) if dump_dir else None
         if self.dump_dir:
             self.dump_dir.mkdir(parents=True, exist_ok=True)
@@ -414,14 +465,25 @@ class CircularSensorDisplay:
         self._draw_text(draw, pir_text, (self.center, pad_y), self.font_small, (12, 16, 22))
 
     def present(self, image: Image.Image) -> None:
+        presented = False
         if self.driver is not None:
-            if hasattr(self.driver, "display"):
-                self.driver.display(image)
-            elif hasattr(self.driver, "image"):
-                self.driver.image(image)
+            try:
+                if hasattr(self.driver, "display"):
+                    self.driver.display(image)
+                    presented = True
+                elif hasattr(self.driver, "image"):
+                    self.driver.image(image)
+                    presented = True
+            except Exception as e:
+                print(f"[Display] 드라이버 오류: {e}")
+
+        if not presented:
+            print("[Display] 드라이버가 없어 화면에 표시되지 않습니다.")
+
         if self.dump_dir:
             frame_path = self.dump_dir / f"frame_{self.frame_index:06d}.png"
             image.save(frame_path)
+            print(f"[Display] 프레임 저장: {frame_path}")
         self.frame_index += 1
 
 
