@@ -333,123 +333,161 @@ class CircularSensorDisplay:
         draw.text(pos, text, font=font, fill=fill)
 
     def render(self, snapshot: SensorSnapshot) -> Image.Image:
-        # 부드러운 배경
-        img = Image.new("RGB", (self.diameter, self.diameter), color=(15, 20, 30))
+        # 밝고 자연스러운 그라디언트 배경
+        img = Image.new("RGB", (self.diameter, self.diameter), color=(240, 245, 255))
         draw = ImageDraw.Draw(img)
 
-        # 단순한 외곽 원
-        margin = 10
+        # 중심에서 바깥으로 그라디언트 효과
+        center = self.diameter // 2
+        for i in range(center):
+            alpha = 1 - (i / center) * 0.3
+            color_val = int(240 * alpha), int(248 * alpha), int(255 * alpha)
+            draw.ellipse(
+                (center - i, center - i, center + i, center + i),
+                fill=color_val
+            )
+
+        # 외곽 테두리 - 부드러운 색상
+        margin = 5
         draw.ellipse(
             (margin, margin, self.diameter - margin, self.diameter - margin),
-            fill=(25, 35, 50),
-            outline=(60, 80, 120),
-            width=3,
+            outline=(180, 200, 230),
+            width=2,
         )
 
         if not snapshot.has_payload():
             self._draw_waiting(draw)
             return img
 
-        self._draw_metric_rings(draw, snapshot)
-        self._draw_center_text(draw, snapshot)
-        self._draw_footer(draw, snapshot)
+        self._draw_data_cards(draw, snapshot)
+        self._draw_center_display(draw, snapshot)
         return img
 
     def _draw_waiting(self, draw: ImageDraw.ImageDraw) -> None:
-        self._draw_text(draw, "Waiting for data...", (self.center, self.center - 20), self.font_medium, (160, 180, 220))
-        self._draw_text(draw, "Kafka connecting", (self.center, self.center + 20), self.font_small, (120, 140, 180))
+        self._draw_text(draw, "🔄 Connecting...", (self.center, self.center - 10), self.font_medium, (80, 120, 200))
+        self._draw_text(draw, "Sensor data loading", (self.center, self.center + 20), self.font_small, (100, 140, 180))
 
-    def _draw_metric_rings(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        ring_thickness = 16
-        gap = 12
-        max_radius = self.diameter / 2.0 - 40
+    def _draw_data_cards(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
+        # 카드 형태로 데이터 표시
+        card_width = 80
+        card_height = 50
+        card_spacing = 20
 
-        # 깔끔한 색상
-        specs = [
-            ("TEMP", snapshot.temp_c, (0.0, 40.0), (220, 120, 120)),
-            ("HUM", snapshot.hum, (0.0, 100.0), (120, 160, 220)),
-            ("PM2.5", snapshot.pm25, (0.0, 150.0), (160, 120, 220)),
+        # 센서 데이터와 색상 정의
+        sensors = [
+            ("TEMP", snapshot.temp_c, "°C", (255, 100, 100)),  # 따뜻한 빨강
+            ("HUMIDITY", snapshot.hum, "%", (100, 180, 255)),   # 시원한 파랑
+            ("PM2.5", snapshot.pm25, "μg", (150, 100, 255)),    # 보라색
         ]
 
-        for idx, (label, value, value_range, color) in enumerate(specs):
-            radius = max_radius - idx * (ring_thickness + gap)
-            if radius <= ring_thickness / 2:
+        # 카드들을 원형으로 배치
+        import math
+        total_cards = len([s for s in sensors if s[1] is not None])
+        if total_cards == 0:
+            return
+
+        radius = self.diameter * 0.28
+        angle_step = 2 * math.pi / max(3, total_cards)
+
+        for i, (label, value, unit, color) in enumerate(sensors):
+            if value is None:
                 continue
 
-            bbox = (
-                self.center - radius,
-                self.center - radius,
-                self.center + radius,
-                self.center + radius,
+            # 카드 위치 계산
+            angle = i * angle_step - math.pi / 2  # -90도부터 시작
+            x = self.center + radius * math.cos(angle)
+            y = self.center + radius * math.sin(angle)
+
+            # 카드 배경 (둥근 모서리)
+            card_rect = (
+                x - card_width // 2,
+                y - card_height // 2,
+                x + card_width // 2,
+                y + card_height // 2,
             )
 
-            # 배경 링
-            base_color = tuple(int(c * 0.3) for c in color)
-            draw.arc(bbox, start=135, end=405, width=ring_thickness, fill=base_color)
+            # 그림자 효과
+            shadow_rect = (
+                card_rect[0] + 2,
+                card_rect[1] + 2,
+                card_rect[2] + 2,
+                card_rect[3] + 2,
+            )
+            draw.rounded_rectangle(shadow_rect, radius=8, fill=(200, 200, 200, 100))
 
-            # 값 표시 링
-            ratio = _clamp_ratio(value, value_range)
-            if ratio > 0:
-                draw.arc(bbox, start=135, end=135 + 270 * ratio, width=ring_thickness, fill=color)
+            # 메인 카드
+            draw.rounded_rectangle(card_rect, radius=8, fill=(255, 255, 255))
+            draw.rounded_rectangle(card_rect, radius=8, outline=color, width=2)
 
-            # 라벨 (왼쪽에만)
-            label_x = self.center - radius - 25
-            label_y = self.center
-            self._draw_text(draw, label, (label_x, label_y), self.font_tiny, color, align="center")
+            # 값 표시
+            value_text = f"{value:.1f}"
+            self._draw_text(draw, value_text, (x, y - 8), self.font_medium, color)
+            self._draw_text(draw, f"{label}", (x, y + 8), self.font_tiny, (80, 80, 80))
+            self._draw_text(draw, unit, (x + 25, y - 8), self.font_tiny, color)
 
-    def _draw_center_text(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        # 단순한 헤더
-        header = snapshot.device_id or "Sensor Monitor"
-        self._draw_text(draw, header, (self.center, self.diameter * 0.2), self.font_small, (180, 200, 230))
+    def _draw_center_display(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
+        # 중앙 메인 정보 영역
+        center_bg = (
+            self.center - 60,
+            self.center - 40,
+            self.center + 60,
+            self.center + 40,
+        )
 
-        # 메인 값 - 깔끔하게
+        # 중앙 배경 카드
+        draw.rounded_rectangle(center_bg, radius=20, fill=(255, 255, 255, 220))
+        draw.rounded_rectangle(center_bg, radius=20, outline=(150, 180, 220), width=2)
+
+        # 장치 이름
+        device_name = snapshot.device_id or "🏠 Smart Sensor"
+        self._draw_text(draw, device_name, (self.center, self.center - 25), self.font_small, (60, 80, 120))
+
+        # 메인 표시값 결정
         if snapshot.temp_c is not None:
-            main_text = f"{snapshot.temp_c:0.1f}°C"
-            main_color = (220, 150, 150)
+            main_value = f"{snapshot.temp_c:.1f}°"
+            main_color = (255, 100, 100)
         elif snapshot.hum is not None:
-            main_text = f"{snapshot.hum:0.0f}%"
-            main_color = (150, 180, 220)
+            main_value = f"{snapshot.hum:.0f}%"
+            main_color = (100, 180, 255)
         else:
-            main_text = "No Data"
-            main_color = (160, 170, 190)
+            main_value = "---"
+            main_color = (150, 150, 150)
 
-        self._draw_text(draw, main_text, (self.center, self.center), self.font_big, main_color)
+        self._draw_text(draw, main_value, (self.center, self.center + 5), self.font_big, main_color)
 
-        # 간단한 보조 정보
-        info_parts = []
-        if snapshot.temp_c is not None and snapshot.hum is not None:
-            info_parts.append(f"Humidity: {snapshot.hum:0.0f}%")
-        elif snapshot.temp_c is None and snapshot.hum is not None:
-            info_parts.append(f"Temperature: {snapshot.temp_c:0.1f}°C" if snapshot.temp_c else "")
+        # 상태 표시
+        age = time.time() - snapshot.ingested_at
+        if age < 5:
+            status = "🟢 LIVE"
+            status_color = (50, 200, 50)
+        elif age < 30:
+            status = "🟡 RECENT"
+            status_color = (255, 180, 50)
+        else:
+            status = "🔴 OLD"
+            status_color = (255, 100, 100)
 
-        if info_parts:
-            self._draw_text(draw, info_parts[0], (self.center, self.center + 40), self.font_small, (150, 170, 190))
+        self._draw_text(draw, status, (self.center, self.center + 25), self.font_tiny, status_color)
 
-    def _draw_footer(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        # 간단한 하단 정보
-        footer_y = self.diameter * 0.8
+        # 하단 추가 정보
+        if snapshot.noise is not None:
+            noise_y = self.diameter * 0.85
+            noise_text = f"🔊 Noise: {snapshot.noise:.0f}dB"
+            self._draw_text(draw, noise_text, (self.center, noise_y), self.font_small, (120, 100, 200))
 
-        # PM 데이터 간단히
-        pm_text = ""
-        if snapshot.pm25 is not None:
-            pm_text = f"PM2.5: {snapshot.pm25:0.0f}μg/m³"
-        elif snapshot.pm10 is not None:
-            pm_text = f"PM10: {snapshot.pm10:0.0f}μg/m³"
-
-        if pm_text:
-            self._draw_text(draw, pm_text, (self.center, footer_y), self.font_small, (160, 180, 200))
-
-        # PIR 상태 - 단순하게
+        # PIR 상태 (우하단)
         if snapshot.pir is not None:
+            pir_x = self.diameter * 0.8
             pir_y = self.diameter * 0.9
-            if snapshot.pir:
-                pir_text = "Motion Detected"
-                pir_color = (220, 120, 120)
-            else:
-                pir_text = "No Motion"
-                pir_color = (120, 180, 120)
 
-            self._draw_text(draw, pir_text, (self.center, pir_y), self.font_small, pir_color)
+            if snapshot.pir:
+                pir_icon = "👁️"
+                pir_color = (255, 100, 100)
+            else:
+                pir_icon = "😴"
+                pir_color = (100, 200, 100)
+
+            self._draw_text(draw, pir_icon, (pir_x, pir_y), self.font_medium, pir_color)
 
     def present(self, image: Image.Image) -> None:
         presented = False
