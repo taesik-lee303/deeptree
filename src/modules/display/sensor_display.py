@@ -333,39 +333,245 @@ class CircularSensorDisplay:
         draw.text(pos, text, font=font, fill=fill)
 
     def render(self, snapshot: SensorSnapshot) -> Image.Image:
-        # 밝고 자연스러운 그라디언트 배경
-        img = Image.new("RGB", (self.diameter, self.diameter), color=(240, 245, 255))
+        # 자연 풍경 배경 - 하늘 그라디언트
+        img = Image.new("RGB", (self.diameter, self.diameter), color=(135, 206, 235))
         draw = ImageDraw.Draw(img)
 
-        # 중심에서 바깥으로 그라디언트 효과
-        center = self.diameter // 2
-        for i in range(center):
-            alpha = 1 - (i / center) * 0.3
-            color_val = int(240 * alpha), int(248 * alpha), int(255 * alpha)
-            draw.ellipse(
-                (center - i, center - i, center + i, center + i),
-                fill=color_val
-            )
+        # 하늘 그라디언트 (위쪽 파랑 -> 아래쪽 연한 하늘색)
+        for y in range(self.diameter):
+            progress = y / self.diameter
+            # 위쪽: 진한 하늘색, 아래쪽: 연한 하늘색
+            r = int(135 + progress * (220 - 135))
+            g = int(206 + progress * (240 - 206))
+            b = int(235 + progress * (250 - 235))
+            draw.line([(0, y), (self.diameter, y)], fill=(r, g, b))
 
-        # 외곽 테두리 - 부드러운 색상
-        margin = 5
-        draw.ellipse(
-            (margin, margin, self.diameter - margin, self.diameter - margin),
-            outline=(180, 200, 230),
-            width=2,
-        )
+        # 원형 마스크
+        mask = Image.new("L", (self.diameter, self.diameter), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.ellipse((0, 0, self.diameter, self.diameter), fill=255)
+
+        # 마스크 적용을 위한 배경 이미지
+        background = Image.new("RGB", (self.diameter, self.diameter), (255, 255, 255))
+        background.paste(img, mask=mask)
+        img = background
+
+        draw = ImageDraw.Draw(img)
 
         if not snapshot.has_payload():
-            self._draw_waiting(draw)
+            self._draw_waiting_nature(draw)
             return img
 
-        self._draw_data_cards(draw, snapshot)
-        self._draw_center_display(draw, snapshot)
+        self._draw_natural_landscape(draw, snapshot)
         return img
 
-    def _draw_waiting(self, draw: ImageDraw.ImageDraw) -> None:
-        self._draw_text(draw, "🔄 Connecting...", (self.center, self.center - 10), self.font_medium, (80, 120, 200))
-        self._draw_text(draw, "Sensor data loading", (self.center, self.center + 20), self.font_small, (100, 140, 180))
+    def _draw_waiting_nature(self, draw: ImageDraw.ImageDraw) -> None:
+        # 기본 구름들
+        self._draw_cloud(draw, self.center - 80, self.diameter * 0.3, 40, (255, 255, 255))
+        self._draw_cloud(draw, self.center + 60, self.diameter * 0.25, 35, (255, 255, 255))
+
+        # 기본 풀밭
+        self._draw_grass(draw, wind_strength=0)
+
+        # 연결 메시지
+        self._draw_text(draw, "🌱 Connecting to nature...", (self.center, self.center), self.font_medium, (50, 120, 50))
+
+    def _draw_natural_landscape(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
+        # 구름 (미세먼지 농도에 따라 색상 변화)
+        cloud_color = self._get_cloud_color(snapshot.pm25)
+        self._draw_cloud(draw, self.center - 80, self.diameter * 0.25, 45, cloud_color)
+        self._draw_cloud(draw, self.center + 70, self.diameter * 0.2, 35, cloud_color)
+
+        # 태양 (온도 표시)
+        if snapshot.temp_c is not None:
+            self._draw_sun(draw, snapshot.temp_c)
+
+        # 물방울들 (습도 표시)
+        if snapshot.hum is not None:
+            self._draw_humidity_drops(draw, snapshot.hum)
+
+        # 풀밭 (PIR 감지 시 흔들림)
+        wind_strength = 3 if snapshot.pir else 0
+        self._draw_grass(draw, wind_strength)
+
+        # 중앙 정보 패널
+        self._draw_info_panel(draw, snapshot)
+
+    def _get_cloud_color(self, pm25: float | None) -> tuple[int, int, int]:
+        if pm25 is None:
+            return (255, 255, 255)  # 기본 하얀 구름
+
+        # PM2.5 농도에 따라 구름 색상 변화 (0-150 범위)
+        intensity = min(pm25 / 150.0, 1.0)  # 0-1 사이로 정규화
+
+        # 하얀색(255,255,255)에서 회색(120,120,120)으로 변화
+        r = int(255 - intensity * 135)
+        g = int(255 - intensity * 135)
+        b = int(255 - intensity * 135)
+
+        return (r, g, b)
+
+    def _draw_cloud(self, draw: ImageDraw.ImageDraw, x: float, y: float, size: int, color: tuple[int, int, int]) -> None:
+        # 구름을 여러 원으로 그리기
+        cloud_parts = [
+            (x - size//3, y, size//2),
+            (x + size//3, y, size//2),
+            (x, y - size//4, size//3),
+            (x - size//6, y + size//6, size//4),
+            (x + size//6, y + size//6, size//4),
+        ]
+
+        for cx, cy, radius in cloud_parts:
+            draw.ellipse(
+                (cx - radius, cy - radius, cx + radius, cy + radius),
+                fill=color
+            )
+
+    def _draw_grass(self, draw: ImageDraw.ImageDraw, wind_strength: int = 0) -> None:
+        # 풀밭을 원의 아래쪽 1/3에 그리기
+        grass_start_y = self.diameter * 0.65
+        grass_height = self.diameter - grass_start_y
+
+        # 풀밭 배경
+        for y in range(int(grass_start_y), self.diameter):
+            # 원형 마스크 내에서만 그리기
+            radius_at_y = math.sqrt((self.center ** 2) - ((y - self.center) ** 2))
+            if radius_at_y > 0:
+                x_start = int(self.center - radius_at_y)
+                x_end = int(self.center + radius_at_y)
+
+                # 그라디언트 풀색 (위쪽 연한 초록 -> 아래쪽 진한 초록)
+                progress = (y - grass_start_y) / grass_height
+                r = int(50 + progress * 20)
+                g = int(150 + progress * 50)
+                b = int(50 + progress * 20)
+
+                draw.line([(x_start, y), (x_end, y)], fill=(r, g, b))
+
+        # 풀잎들 그리기
+        num_grass = 30
+        for i in range(num_grass):
+            # 풀 위치
+            angle = (i / num_grass) * 2 * math.pi
+            distance = self.center * 0.4 + (i % 3) * 20  # 다양한 거리
+
+            base_x = self.center + distance * math.cos(angle)
+            base_y = self.center + distance * math.sin(angle)
+
+            # 원형 영역 내에서만 풀 그리기
+            if (base_x - self.center) ** 2 + (base_y - self.center) ** 2 <= (self.center - 10) ** 2:
+                if base_y >= grass_start_y:  # 풀밭 영역에서만
+                    # 바람 효과 (PIR 감지 시)
+                    wind_offset = 0
+                    if wind_strength > 0:
+                        wind_time = time.time() * 3  # 빠른 애니메이션
+                        wind_offset = math.sin(wind_time + i * 0.5) * wind_strength
+
+                    # 풀잎 그리기
+                    grass_height = 15 + (i % 8)
+                    top_x = base_x + wind_offset
+                    top_y = base_y - grass_height
+
+                    # 풀잎 색상 (랜덤하게 조금씩 다르게)
+                    shade = i % 3
+                    grass_colors = [(60, 180, 60), (70, 190, 70), (50, 170, 50)]
+                    grass_color = grass_colors[shade]
+
+                    draw.line([(base_x, base_y), (top_x, top_y)], fill=grass_color, width=2)
+
+    def _draw_sun(self, draw: ImageDraw.ImageDraw, temperature: float) -> None:
+        # 태양 위치 (우상단)
+        sun_x = self.center + self.diameter * 0.25
+        sun_y = self.diameter * 0.25
+
+        # 온도에 따른 태양 크기와 색상
+        temp_ratio = min(max(temperature / 40.0, 0), 1)  # 0-40도를 0-1로 정규화
+
+        # 태양 크기 (온도가 높을수록 크게)
+        sun_radius = 20 + temp_ratio * 15
+
+        # 태양 색상 (시원한 노랑 -> 뜨거운 주황)
+        r = int(255)
+        g = int(255 - temp_ratio * 100)  # 온도가 높으면 주황색으로
+        b = int(100 - temp_ratio * 100)
+
+        # 태양 그리기
+        draw.ellipse(
+            (sun_x - sun_radius, sun_y - sun_radius, sun_x + sun_radius, sun_y + sun_radius),
+            fill=(r, g, b)
+        )
+
+        # 태양 광선들
+        for i in range(8):
+            angle = i * math.pi / 4
+            ray_length = sun_radius + 10
+            end_x = sun_x + ray_length * math.cos(angle)
+            end_y = sun_y + ray_length * math.sin(angle)
+
+            draw.line([(sun_x, sun_y), (end_x, end_y)], fill=(r, g, b), width=2)
+
+        # 온도 텍스트
+        temp_text = f"{temperature:.1f}°C"
+        self._draw_text(draw, temp_text, (sun_x, sun_y + sun_radius + 20), self.font_tiny, (r, g, b))
+
+    def _draw_humidity_drops(self, draw: ImageDraw.ImageDraw, humidity: float) -> None:
+        # 습도에 따라 물방울 개수 결정
+        num_drops = int(humidity / 20)  # 0-100% -> 0-5개 물방울
+
+        for i in range(num_drops):
+            # 물방울 위치 (왼쪽 상단 영역에 분산)
+            drop_x = self.center - 60 + (i % 3) * 30
+            drop_y = self.diameter * 0.35 + (i % 2) * 20
+
+            # 물방울 모양 (작은 타원)
+            drop_size = 4
+            draw.ellipse(
+                (drop_x - drop_size, drop_y - drop_size*1.5, drop_x + drop_size, drop_y + drop_size),
+                fill=(100, 150, 255)
+            )
+
+        # 습도 텍스트 (좌상단)
+        humidity_text = f"💧 {humidity:.0f}%"
+        self._draw_text(draw, humidity_text, (self.diameter * 0.2, self.diameter * 0.15), self.font_tiny, (100, 150, 255))
+
+    def _draw_info_panel(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
+        # 중앙 정보 패널 (반투명 배경)
+        panel_width = 100
+        panel_height = 60
+        panel_x = self.center - panel_width // 2
+        panel_y = self.center - panel_height // 2
+
+        # 반투명 배경
+        overlay = Image.new("RGBA", (panel_width, panel_height), (255, 255, 255, 180))
+        temp_img = Image.new("RGBA", (self.diameter, self.diameter), (0, 0, 0, 0))
+        temp_img.paste(overlay, (panel_x, panel_y))
+
+        # 패널 테두리
+        draw.rounded_rectangle(
+            (panel_x, panel_y, panel_x + panel_width, panel_y + panel_height),
+            radius=15,
+            outline=(150, 150, 150),
+            width=2
+        )
+
+        # 장치 이름
+        device_name = snapshot.device_id or "🏡 Home"
+        self._draw_text(draw, device_name, (self.center, self.center - 20), self.font_small, (70, 70, 70))
+
+        # 현재 시간 표시
+        current_time = time.strftime("%H:%M")
+        self._draw_text(draw, current_time, (self.center, self.center), self.font_medium, (50, 50, 50))
+
+        # 데이터 상태
+        age = time.time() - snapshot.ingested_at
+        if age < 5:
+            status = "🟢 LIVE"
+        elif age < 30:
+            status = "🟡 RECENT"
+        else:
+            status = "🔴 STALE"
+
+        self._draw_text(draw, status, (self.center, self.center + 20), self.font_tiny, (80, 80, 80))
 
     def _draw_data_cards(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
         # 카드 형태로 데이터 표시
