@@ -333,52 +333,17 @@ class CircularSensorDisplay:
         draw.text(pos, text, font=font, fill=fill)
 
     def render(self, snapshot: SensorSnapshot) -> Image.Image:
-        # 다크 그라디언트 배경
-        img = Image.new("RGB", (self.diameter, self.diameter), color=(12, 15, 25))
+        # 부드러운 배경
+        img = Image.new("RGB", (self.diameter, self.diameter), color=(15, 20, 30))
         draw = ImageDraw.Draw(img)
 
-        # 외곽 글로우 효과
-        outer_margin = 8
-        for i in range(3):
-            glow_margin = outer_margin - i * 2
-            alpha = 40 - i * 10
-            glow_color = (20 + i * 15, 35 + i * 20, 60 + i * 25)
-            draw.ellipse(
-                (
-                    glow_margin,
-                    glow_margin,
-                    self.diameter - glow_margin,
-                    self.diameter - glow_margin,
-                ),
-                fill=glow_color,
-                outline=None,
-            )
-
-        # 메인 배경 원
-        main_margin = outer_margin + 12
+        # 단순한 외곽 원
+        margin = 10
         draw.ellipse(
-            (
-                main_margin,
-                main_margin,
-                self.diameter - main_margin,
-                self.diameter - main_margin,
-            ),
-            fill=(18, 22, 35),
-            outline=(45, 60, 85),
-            width=2,
-        )
-
-        # 내부 그라디언트 원
-        inner_margin = main_margin + 15
-        draw.ellipse(
-            (
-                inner_margin,
-                inner_margin,
-                self.diameter - inner_margin,
-                self.diameter - inner_margin,
-            ),
-            fill=(22, 28, 42),
-            outline=None,
+            (margin, margin, self.diameter - margin, self.diameter - margin),
+            fill=(25, 35, 50),
+            outline=(60, 80, 120),
+            width=3,
         )
 
         if not snapshot.has_payload():
@@ -391,38 +356,22 @@ class CircularSensorDisplay:
         return img
 
     def _draw_waiting(self, draw: ImageDraw.ImageDraw) -> None:
-        # 펄스 애니메이션을 위한 점들
-        import time
-        pulse = int((time.time() * 2) % 3)
-        dots = "." * (pulse + 1) + " " * (2 - pulse)
-
-        self._draw_text(draw, f"Waiting for data{dots}", (self.center, self.center - 15), self.font_medium, (180, 200, 240))
-        self._draw_text(draw, "Kafka stream connecting", (self.center, self.center + 25), self.font_small, (120, 150, 200))
-
-        # 로딩 원
-        loading_radius = 35
-        loading_bbox = (
-            self.center - loading_radius,
-            self.center - loading_radius + 80,
-            self.center + loading_radius,
-            self.center + loading_radius + 80,
-        )
-        angle_offset = int(time.time() * 180) % 360
-        draw.arc(loading_bbox, start=angle_offset, end=angle_offset + 60, width=3, fill=(100, 150, 255))
+        self._draw_text(draw, "Waiting for data...", (self.center, self.center - 20), self.font_medium, (160, 180, 220))
+        self._draw_text(draw, "Kafka connecting", (self.center, self.center + 20), self.font_small, (120, 140, 180))
 
     def _draw_metric_rings(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        ring_thickness = 20
-        gap = 8
-        max_radius = self.diameter / 2.0 - 35
+        ring_thickness = 16
+        gap = 12
+        max_radius = self.diameter / 2.0 - 40
 
-        # 개선된 색상 및 그라디언트 효과
+        # 깔끔한 색상
         specs = [
-            ("TEMP", snapshot.temp_c, (0.0, 40.0), (255, 107, 107), "°C"),  # 따뜻한 빨강
-            ("HUM", snapshot.hum, (0.0, 100.0), (74, 144, 226), "%"),       # 시원한 파랑
-            ("PM2.5", snapshot.pm25, (0.0, 150.0), (168, 85, 247), "μg"),   # 보라색
+            ("TEMP", snapshot.temp_c, (0.0, 40.0), (220, 120, 120)),
+            ("HUM", snapshot.hum, (0.0, 100.0), (120, 160, 220)),
+            ("PM2.5", snapshot.pm25, (0.0, 150.0), (160, 120, 220)),
         ]
 
-        for idx, (label, value, value_range, color, unit) in enumerate(specs):
+        for idx, (label, value, value_range, color) in enumerate(specs):
             radius = max_radius - idx * (ring_thickness + gap)
             if radius <= ring_thickness / 2:
                 continue
@@ -434,180 +383,73 @@ class CircularSensorDisplay:
                 self.center + radius,
             )
 
-            # 배경 링 (더 어둡고 투명한 효과)
-            base_color = tuple(max(15, int(c * 0.25)) for c in color)
+            # 배경 링
+            base_color = tuple(int(c * 0.3) for c in color)
             draw.arc(bbox, start=135, end=405, width=ring_thickness, fill=base_color)
 
-            # 값에 따른 색상 강도 조절
+            # 값 표시 링
             ratio = _clamp_ratio(value, value_range)
             if ratio > 0:
-                # 그라디언트 효과를 위한 다중 링
-                for i in range(3):
-                    thickness = ring_thickness - i * 2
-                    intensity = 1.0 - i * 0.2
-                    ring_color = tuple(int(c * intensity) for c in color)
-                    inner_bbox = (
-                        self.center - radius + i,
-                        self.center - radius + i,
-                        self.center + radius - i,
-                        self.center + radius - i,
-                    )
-                    draw.arc(inner_bbox, start=135, end=135 + 270 * ratio, width=thickness, fill=ring_color)
+                draw.arc(bbox, start=135, end=135 + 270 * ratio, width=ring_thickness, fill=color)
 
-            # 라벨과 값 표시 개선
-            label_y = self.center - radius + ring_thickness / 2.0
-            value_text = f"{value:.1f}{unit}" if value is not None else "--"
-
-            # 라벨 배경
-            label_bbox = (
-                self.center - 30, label_y - 8,
-                self.center + 30, label_y + 8
-            )
-            draw.rounded_rectangle(label_bbox, radius=8, fill=(0, 0, 0, 100))
-
-            self._draw_text(draw, label, (self.center - 15, label_y), self.font_tiny, color, align="center")
-            self._draw_text(draw, value_text, (self.center + 15, label_y), self.font_tiny, (255, 255, 255), align="center")
+            # 라벨 (왼쪽에만)
+            label_x = self.center - radius - 25
+            label_y = self.center
+            self._draw_text(draw, label, (label_x, label_y), self.font_tiny, color, align="center")
 
     def _draw_center_text(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        header = snapshot.device_id or "IoT SENSOR HUB"
-        age = max(0.0, time.time() - snapshot.ingested_at)
-        time_text = _format_time(snapshot.ts, snapshot.ingested_at)
-        age_text = _format_age(age)
+        # 단순한 헤더
+        header = snapshot.device_id or "Sensor Monitor"
+        self._draw_text(draw, header, (self.center, self.diameter * 0.2), self.font_small, (180, 200, 230))
 
-        # 헤더 배경
-        header_y = self.diameter * 0.18
-        header_bbox = (
-            self.center - 80, header_y - 12,
-            self.center + 80, header_y + 12
-        )
-        draw.rounded_rectangle(header_bbox, radius=12, fill=(30, 40, 60, 150))
-
-        self._draw_text(draw, header, (self.center, header_y), self.font_small, (200, 220, 255))
-        self._draw_text(draw, time_text, (self.center, self.diameter * 0.28), self.font_tiny, (150, 170, 200))
-
-        # Age 표시를 더 눈에 띄게
-        age_color = (100, 200, 100) if age < 5 else (255, 200, 100) if age < 30 else (255, 150, 150)
-        self._draw_text(draw, age_text, (self.diameter * 0.85, self.diameter * 0.28), self.font_tiny, age_color, align="right")
-
-        # 메인 값 표시
+        # 메인 값 - 깔끔하게
         if snapshot.temp_c is not None:
-            main_text = f"{snapshot.temp_c:0.1f}°"
-            main_color = (255, 120, 120)
-            unit_text = "C"
+            main_text = f"{snapshot.temp_c:0.1f}°C"
+            main_color = (220, 150, 150)
         elif snapshot.hum is not None:
-            main_text = f"{snapshot.hum:0.0f}"
-            main_color = (120, 180, 255)
-            unit_text = "%RH"
+            main_text = f"{snapshot.hum:0.0f}%"
+            main_color = (150, 180, 220)
         else:
-            main_text = "--"
+            main_text = "No Data"
             main_color = (160, 170, 190)
-            unit_text = ""
 
-        # 메인 값에 글로우 효과
-        for offset in [(2, 2), (1, 1), (0, 0)]:
-            glow_color = tuple(int(c * (0.3 + 0.35 * (2 - offset[0]))) for c in main_color)
-            self._draw_text(draw, main_text, (self.center + offset[0], self.center - 10 + offset[1]), self.font_big, glow_color)
+        self._draw_text(draw, main_text, (self.center, self.center), self.font_big, main_color)
 
-        if unit_text:
-            self._draw_text(draw, unit_text, (self.center + 50, self.center - 25), self.font_medium, main_color)
+        # 간단한 보조 정보
+        info_parts = []
+        if snapshot.temp_c is not None and snapshot.hum is not None:
+            info_parts.append(f"Humidity: {snapshot.hum:0.0f}%")
+        elif snapshot.temp_c is None and snapshot.hum is not None:
+            info_parts.append(f"Temperature: {snapshot.temp_c:0.1f}°C" if snapshot.temp_c else "")
 
-        # 보조 정보
-        secondary_parts = []
-        if snapshot.hum is not None and snapshot.temp_c is not None:
-            secondary_parts.append(f"RH {snapshot.hum:0.0f}%")
-        if snapshot.noise is not None:
-            secondary_parts.append(f"🔊 {snapshot.noise:0.0f}dB")
-        if not secondary_parts:
-            secondary_parts.append("⚡ Live Data")
-
-        secondary_text = " • ".join(secondary_parts)
-        self._draw_text(draw, secondary_text, (self.center, self.center + 50), self.font_small, (180, 200, 230))
+        if info_parts:
+            self._draw_text(draw, info_parts[0], (self.center, self.center + 40), self.font_small, (150, 170, 190))
 
     def _draw_footer(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        # PM 데이터를 더 세련되게 표시
-        pm_parts = []
-        pm_colors = [(255, 180, 100), (255, 140, 140), (255, 100, 180)]  # 그라디언트 색상
+        # 간단한 하단 정보
+        footer_y = self.diameter * 0.8
 
-        if snapshot.pm1 is not None:
-            pm_parts.append((f"PM1.0 {snapshot.pm1:0.0f}μg", pm_colors[0]))
+        # PM 데이터 간단히
+        pm_text = ""
         if snapshot.pm25 is not None:
-            pm_parts.append((f"PM2.5 {snapshot.pm25:0.0f}μg", pm_colors[1]))
-        if snapshot.pm10 is not None:
-            pm_parts.append((f"PM10 {snapshot.pm10:0.0f}μg", pm_colors[2]))
+            pm_text = f"PM2.5: {snapshot.pm25:0.0f}μg/m³"
+        elif snapshot.pm10 is not None:
+            pm_text = f"PM10: {snapshot.pm10:0.0f}μg/m³"
 
-        if pm_parts:
-            pm_y = self.diameter * 0.75
-            total_width = sum(len(text) for text, _ in pm_parts) * 6 + (len(pm_parts) - 1) * 20
-            start_x = self.center - total_width / 2
+        if pm_text:
+            self._draw_text(draw, pm_text, (self.center, footer_y), self.font_small, (160, 180, 200))
 
-            for i, (text, color) in enumerate(pm_parts):
-                if i > 0:
-                    start_x += 20  # 간격
+        # PIR 상태 - 단순하게
+        if snapshot.pir is not None:
+            pir_y = self.diameter * 0.9
+            if snapshot.pir:
+                pir_text = "Motion Detected"
+                pir_color = (220, 120, 120)
+            else:
+                pir_text = "No Motion"
+                pir_color = (120, 180, 120)
 
-                # 배경 박스
-                text_width = len(text) * 6
-                bbox = (start_x - 5, pm_y - 10, start_x + text_width + 5, pm_y + 10)
-                draw.rounded_rectangle(bbox, radius=8, fill=(*color, 50))
-
-                self._draw_text(draw, text, (start_x + text_width/2, pm_y), self.font_tiny, color)
-                start_x += text_width
-        else:
-            self._draw_text(draw, "🌪️ Air Quality Monitoring", (self.center, self.diameter * 0.75), self.font_small, (150, 180, 220))
-
-        # PIR 센서 상태를 더 현대적으로
-        pir_text: str
-        pir_color: tuple[int, int, int]
-        pir_icon: str
-
-        if snapshot.pir is None:
-            pir_text = "PIR OFFLINE"
-            pir_color = (120, 130, 150)
-            pir_icon = "⚪"
-        elif snapshot.pir:
-            pir_text = "MOTION DETECTED"
-            pir_color = (255, 100, 100)
-            pir_icon = "🔴"
-        else:
-            pir_text = "AREA CLEAR"
-            pir_color = (100, 255, 150)
-            pir_icon = "🟢"
-
-        # PIR 상태 박스를 더 세련되게
-        pad_x = 90
-        pad_y = self.diameter * 0.88
-
-        # 그림자 효과
-        shadow_box = (
-            self.center - pad_x + 2,
-            pad_y - 16 + 2,
-            self.center + pad_x + 2,
-            pad_y + 16 + 2,
-        )
-        draw.rounded_rectangle(shadow_box, radius=16, fill=(0, 0, 0, 80))
-
-        # 메인 박스
-        main_box = (
-            self.center - pad_x,
-            pad_y - 16,
-            self.center + pad_x,
-            pad_y + 16,
-        )
-
-        # 그라디언트 효과를 위한 다중 박스
-        for i in range(3):
-            inner_box = (
-                self.center - pad_x + i,
-                pad_y - 16 + i,
-                self.center + pad_x - i,
-                pad_y + 16 - i,
-            )
-            alpha = 1.0 - i * 0.3
-            box_color = tuple(int(c * alpha) for c in pir_color)
-            draw.rounded_rectangle(inner_box, radius=16-i, fill=box_color)
-
-        # 아이콘과 텍스트
-        self._draw_text(draw, pir_icon, (self.center - 40, pad_y), self.font_medium, (255, 255, 255))
-        self._draw_text(draw, pir_text, (self.center + 10, pad_y), self.font_small, (255, 255, 255))
+            self._draw_text(draw, pir_text, (self.center, pir_y), self.font_small, pir_color)
 
     def present(self, image: Image.Image) -> None:
         presented = False
