@@ -45,7 +45,7 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         target="apps.display_switcher",
         description="Switch sensor display to carecall view when conversation events arrive",
         default=True,
-        extra_args=("--idle-timeout", "30"),
+        extra_args=("--idle-timeout", "30", "--enable-uart-producer"),
     ),
 
 }

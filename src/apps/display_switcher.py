@@ -94,14 +94,17 @@ class ProcessController:
 class DisplaySwitcher:
     """상태에 따라 적절한 디스플레이 프로세스를 실행."""
 
-    def __init__(self, sensor_controller: ProcessController, carecall_controller: ProcessController, idle_timeout: float):
+    def __init__(self, sensor_controller: ProcessController, carecall_controller: ProcessController, idle_timeout: float, uart_controller: ProcessController | None = None):
         self.sensor = sensor_controller
         self.carecall = carecall_controller
+        self.uart = uart_controller
         self.idle_timeout = idle_timeout
         self.state = "sensor"
         self._last_carecall_event: float = 0.0
 
     async def start(self) -> None:
+        if self.uart:
+            await self.uart.ensure_running()
         await self.sensor.ensure_running()
         self.state = "sensor"
         self._last_carecall_event = 0.0
@@ -131,6 +134,8 @@ class DisplaySwitcher:
 
     async def tick(self) -> None:
         now = time.time()
+        if self.uart:
+            await self.uart.ensure_running()
         if self.state == "carecall":
             if self._last_carecall_event and (now - self._last_carecall_event) >= self.idle_timeout:
                 await self.switch_to_sensor()
@@ -142,6 +147,8 @@ class DisplaySwitcher:
     async def shutdown(self) -> None:
         await self.carecall.stop()
         await self.sensor.stop()
+        if self.uart:
+            await self.uart.stop()
 
 
 class KafkaEmotionWatcher:
@@ -238,7 +245,9 @@ def parse_extra_args(values: Optional[Iterable[str]]) -> List[str]:
 def build_parser() -> argparse.ArgumentParser:
     from networks.kafka.kafka_config import emotion_settings
 
-    parser = argparse.ArgumentParser(description="센서/케어콜 디스플레이 전환 런처")
+    parser = argparse.ArgumentParser(
+        description="센서/케어콜 디스플레이를 상황에 따라 전환",
+    )
     parser.add_argument(
         "--bootstrap",
         default=",".join(emotion_settings.bootstrap_servers),
@@ -288,7 +297,43 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="수신한 케어콜 이벤트 페이로드를 로그로 출력",
     )
+    parser.add_argument(
+        "--enable-uart-producer",
+        dest="uart_producer",
+        action="store_true",
+        help="UART → Kafka 생산자를 함께 실행",
+    )
+    parser.add_argument(
+        "--no-uart-producer",
+        dest="uart_producer",
+        action="store_false",
+        help="UART 생산자를 실행하지 않음",
+    )
+    parser.set_defaults(uart_producer=False)
+    parser.add_argument(
+        "--uart-dev",
+        default="/dev/serial0",
+        help="UART 디바이스 경로",
+    )
+    parser.add_argument(
+        "--uart-baud",
+        type=int,
+        default=9600,
+        help="UART Baudrate",
+    )
+    parser.add_argument(
+        "--uart-topic",
+        default=None,
+        help="Kafka 토픽 (지정 시에만 적용)",
+    )
+    parser.add_argument(
+        "--uart-arg",
+        action="append",
+        default=[],
+        help="uart_producer.py에 전달할 추가 인자",
+    )
     return parser
+
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -311,9 +356,26 @@ async def run(args: argparse.Namespace) -> int:
         *parse_extra_args(args.carecall_arg),
     ]
 
+
+    uart_cmd = [
+        PYTHON_EXECUTABLE,
+        "-m",
+        "networks.kafka.uart_producer",
+        "--dev",
+        args.uart_dev,
+        "--baud",
+        str(args.uart_baud),
+        *parse_extra_args(args.uart_arg),
+    ]
+    if args.uart_topic:
+        uart_cmd.extend(["--topic", args.uart_topic])
+
     sensor_controller = ProcessController(ProcessSpec("sensor-display", sensor_cmd), env, SRC_ROOT)
     carecall_controller = ProcessController(ProcessSpec("carecall-display", carecall_cmd), env, SRC_ROOT)
-    switcher = DisplaySwitcher(sensor_controller, carecall_controller, idle_timeout=args.idle_timeout)
+    uart_controller = None
+    if args.uart_producer:
+        uart_controller = ProcessController(ProcessSpec("uart-producer", uart_cmd), env, SRC_ROOT)
+    switcher = DisplaySwitcher(sensor_controller, carecall_controller, idle_timeout=args.idle_timeout, uart_controller=uart_controller)
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[Tuple[str, object]] = asyncio.Queue()
