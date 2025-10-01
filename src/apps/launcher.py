@@ -44,7 +44,8 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
     "display-switcher": ModuleSpec(
         target="apps.display_switcher",
         description="Switch sensor display to carecall view when conversation events arrive",
-        default=False,
+        default=True,
+        extra_args=("--idle-timeout", "30"),
     ),
 
 }
@@ -52,7 +53,6 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
 DEFAULT_MODULES: Tuple[str, ...] = tuple(
     name for name, spec in MODULE_REGISTRY.items() if spec.default
 )
-
 
 def determine_modules(requested: Sequence[str] | None, include_display: bool) -> List[str]:
     if requested:
@@ -126,6 +126,8 @@ async def run_launcher(modules: Sequence[str], module_args: Dict[str, List[str]]
         env["PYTHONPATH"] = src_path + os.pathsep + python_path
     else:
         env["PYTHONPATH"] = src_path
+
+    env.setdefault("RPPG_DEBUG_VISUAL", "0")
 
     for name in modules:
         spec = MODULE_REGISTRY[name]

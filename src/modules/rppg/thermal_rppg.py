@@ -4,6 +4,7 @@
 #   python -m modules.rppg.thermal_rppg
 
 import time, logging, warnings
+import os
 from dataclasses import dataclass
 from enum import Enum
 from collections import deque
@@ -1189,11 +1190,13 @@ class ThermalrPPG:
 
 
 if __name__ == "__main__":
+    debug_visual_env = os.getenv("RPPG_DEBUG_VISUAL", "1")
+    debug_visual = debug_visual_env.lower() not in ("0", "false", "off")
     cfg = ThermalrPPGConfig(
         sampling_rate=16.0,
         min_measurement_duration=12,
         enable_motion_compensation=True,
-        debug_visual=True,
+        debug_visual=debug_visual,
         enable_superres=True,
         superres_scale=2,
         superres_frames=12,
