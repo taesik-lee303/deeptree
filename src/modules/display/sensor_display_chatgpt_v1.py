@@ -1,11 +1,16 @@
 # sensor_display.py
 """
-Kafka 파이프라인을 통해 수집한 UART 센서 값을 2.1인치 원형 디스플레이(기본 480x480)에
-미니멀하고 세련된 카드형 UI로 렌더링합니다.
+2.1인치 원형(기본 480x480) 디스플레이에 '현실적인 미니멀 자연 테마'로 센서 데이터를 렌더링.
 
-- kafka-python 소비자로 settings.sensor_topic 구독
-- 메시지 페이로드는 uart_receiver.py와 유사한 JSON 스키마를 가정
-- Pillow로 원형 레이아웃을 구성하고, Tkinter 프리뷰(옵션) 혹은 외부 드라이버에 전달
+자연 요소(하늘/태양·달 글로우/구름·헤이즈/잔디 스웨이/물결 리플)를
+센서 값과 시간대에 연동:
+- 시간대: 하늘 그라디언트/태양·달 위치, 색·밝기
+- PM2.5: 구름의 농담과 헤이즈 강도
+- 습도: 물방울/연무 강조
+- PIR/소음: 바람 강도(잔디 스웨이)와 물결 리플
+
+UI는 글래스모피즘 중앙 패널과 3개 카드(TEMP/HUM/PM2.5) + 하단 보조 정보(소음/PIR/시간).
+Kafka 소비/큐 구조, Tkinter 프리뷰 유지.
 """
 
 from __future__ import annotations
@@ -20,6 +25,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+import sys
+import os
+import random
+import hashlib
 
 # Kafka
 try:
@@ -56,8 +65,7 @@ except Exception as exc:  # pragma: no cover
 else:
     _TKINTER_IMPORT_ERROR = None
 
-import sys
-import os
+# 프로젝트 설정
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from networks.kafka.kafka_config import settings
 
@@ -224,7 +232,6 @@ class TkinterDisplayDriver:
         self.label = Label(self.root, bg="black")
         self.label.pack(pady=10)
 
-        # Top-most 트릭(깜빡임 방지)
         self.root.lift()
         self.root.attributes("-topmost", True)
         self.root.after_idle(lambda: self.root.attributes("-topmost", False))
@@ -237,23 +244,54 @@ class TkinterDisplayDriver:
 
 
 # -----------------------------
-# 미니멀 원형 대시보드 렌더러
+# 배경 캐시(성능) & 랜덤 시드
 # -----------------------------
-class CircularSensorDisplay:
-    # 컬러 팔레트 (파스텔/뉴모피즘 느낌)
-    BG_TOP = (244, 248, 252)
-    BG_BOTTOM = (225, 235, 245)
+class BackgroundCache:
+    def __init__(self):
+        self.image: Optional[Image.Image] = None
+        self.key: Optional[tuple] = None  # (phase, pm_tier, size)
+
+    def get(self, key: tuple[int, int, int]) -> Optional[Image.Image]:
+        if self.key == key and self.image is not None:
+            return self.image.copy()
+        return None
+
+    def set(self, key: tuple[int, int, int], img: Image.Image) -> None:
+        self.key = key
+        self.image = img.copy()
+
+
+def _hash_seed(s: str) -> int:
+    h = hashlib.sha256(s.encode("utf-8")).hexdigest()
+    return int(h[:8], 16)
+
+
+# -----------------------------
+# 미니멀 자연 테마 렌더러
+# -----------------------------
+class CircularNaturalDisplay:
+    # 팔레트
+    SKY_DAY = ((160, 205, 255), (220, 240, 255))      # 상단→하단
+    SKY_DAWN = ((255, 170, 120), (255, 220, 200))
+    SKY_DUSK = ((130, 160, 220), (240, 210, 200))
+    SKY_NIGHT = ((25, 35, 60), (60, 75, 110))
     RING = (210, 220, 235)
-    CARD_FILL = (255, 255, 255)
-    CARD_BORDER = (210, 220, 235)
-    TEXT_MAIN = (40, 50, 60)
-    TEXT_SUB = (110, 120, 130)
-    TEMP_COLOR = (255, 137, 115)   # 살구빛 오렌지
-    HUM_COLOR = (110, 175, 245)    # 하늘색
-    PM_COLOR = (165, 140, 245)     # 연보라
+    HAZE = (220, 220, 220, 0)  # alpha 동적
+    GRASS_NEAR = (70, 150, 80)
+    GRASS_FAR = (110, 170, 120)
+    HILL_1 = (90, 150, 110)
+    HILL_2 = (120, 180, 140)
+    HILL_3 = (150, 200, 160)
+    TEXT_MAIN = (30, 40, 50)
+    TEXT_SUB = (105, 115, 125)
+    TEMP_COLOR = (255, 137, 115)
+    HUM_COLOR = (110, 175, 245)
+    PM_COLOR = (165, 140, 245)
     LIVE = (62, 201, 85)
     RECENT = (255, 187, 70)
     OLD = (235, 95, 85)
+    GLASS = (255, 255, 255, 210)
+    CARD_BORDER = (210, 220, 235)
 
     def __init__(
         self,
@@ -269,7 +307,6 @@ class CircularSensorDisplay:
         self.diameter = diameter
         self.center = diameter / 2.0
 
-        # 드라이버
         if driver is None and use_tkinter:
             try:
                 self.driver = TkinterDisplayDriver(diameter)
@@ -292,6 +329,16 @@ class CircularSensorDisplay:
         self.font_sm = self._load_font(font_path, 26)
         self.font_xs = self._load_font(font_path, 20)
 
+        # 배경 캐시
+        self.bg_cache = BackgroundCache()
+
+        # 장면 랜덤 고정(디바이스별 다른 풍경)
+        self.scene_seed = _hash_seed(os.uname().nodename if hasattr(os, "uname") else "deepcare")
+        random.seed(self.scene_seed)
+
+        # 물결 리플 상태
+        self._ripple_start: Optional[float] = None
+
     # ---- 폰트/텍스트 ----
     def _load_font(self, font_path: str | None, size: int) -> ImageFont.ImageFont:
         candidates = []
@@ -300,10 +347,8 @@ class CircularSensorDisplay:
         candidates.extend(
             Path(p)
             for p in (
-                # Windows (한글 포함)
                 "C:/Windows/Fonts/malgun.ttf",
                 "C:/Windows/Fonts/seguiemj.ttf",
-                # Linux
                 "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -324,15 +369,7 @@ class CircularSensorDisplay:
             return int(r - l), int(b - t)
         return draw.textsize(text, font=font)
 
-    def _draw_text(
-        self,
-        draw: ImageDraw.ImageDraw,
-        text: str,
-        xy: tuple[float, float],
-        font: ImageFont.ImageFont,
-        fill: tuple[int, int, int],
-        align: str = "center",
-    ) -> None:
+    def _draw_text(self, draw, text, xy, font, fill, align="center"):
         w, h = self._text_size(draw, text, font)
         if align == "center":
             pos = (xy[0] - w / 2.0, xy[1] - h / 2.0)
@@ -342,13 +379,43 @@ class CircularSensorDisplay:
             pos = (xy[0], xy[1] - h / 2.0)
         draw.text(pos, text, font=font, fill=fill)
 
-    # ---- 도형 헬퍼 ----
+    # ---- 시간대/페이즈 ----
+    def _phase_from_time(self, ts: Optional[float]) -> int:
+        # 0=night, 1=dawn, 2=day, 3=dusk
+        if ts is None:
+            hour = datetime.now().hour
+        else:
+            hour = datetime.fromtimestamp(ts).hour
+        if 22 <= hour or hour < 6:
+            return 0
+        if 6 <= hour < 8:
+            return 1
+        if 8 <= hour < 18:
+            return 2
+        return 3
+
+    def _sky_colors(self, phase: int):
+        return {
+            0: self.SKY_NIGHT,
+            1: self.SKY_DAWN,
+            2: self.SKY_DAY,
+            3: self.SKY_DUSK,
+        }[phase]
+
+    # ---- 그림자/글로우/라운드 ----
+    def _soft_glow(self, base: Image.Image, x: float, y: float, r: float, color: tuple[int, int, int], alpha=200, blur=16):
+        layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        ld.ellipse((x - r, y - r, x + r, y + r), fill=color + (alpha,))
+        layer = layer.filter(ImageFilter.GaussianBlur(blur))
+        base.alpha_composite(layer)
+
     def _rounded_rect(
         self,
         base: Image.Image,
         rect: tuple[int, int, int, int],
         radius: int,
-        fill: tuple[int, int, int] | tuple[int, int, int, int],
+        fill: tuple[int, int, int, int],
         outline: Optional[tuple[int, int, int]] = None,
         width: int = 1,
         shadow: bool = True,
@@ -356,13 +423,10 @@ class CircularSensorDisplay:
         x0, y0, x1, y1 = rect
         w = x1 - x0
         h = y1 - y0
-
-        # 카드 레이어
         card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         cd = ImageDraw.Draw(card)
         cd.rounded_rectangle((0, 0, w, h), radius=radius, fill=fill, outline=outline, width=width)
         if shadow:
-            # 부드러운 그림자
             shadow_layer = Image.new("RGBA", (w + 10, h + 10), (0, 0, 0, 0))
             sd = ImageDraw.Draw(shadow_layer)
             sd.rounded_rectangle((5, 5, w + 5, h + 5), radius=radius + 2, fill=(0, 0, 0, 60))
@@ -375,146 +439,298 @@ class CircularSensorDisplay:
         bbox = (x - r, y - r, x + r, y + r)
         draw.ellipse(bbox, outline=color, width=width)
 
-    # ---- 메인 렌더 ----
-    def render(self, snapshot: SensorSnapshot) -> Image.Image:
-        # 배경 그라디언트
-        bg = Image.new("RGBA", (self.diameter, self.diameter), (0, 0, 0, 0))
-        g = ImageDraw.Draw(bg)
+    # ---- 자연 요소: 구름/언덕/잔디/헤이즈/물결 ----
+    def _draw_sky(self, phase: int) -> Image.Image:
+        img = Image.new("RGBA", (self.diameter, self.diameter), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        top, bottom = self._sky_colors(phase)
         for y in range(self.diameter):
             t = y / max(1, self.diameter - 1)
-            r = int(self.BG_TOP[0] * (1 - t) + self.BG_BOTTOM[0] * t)
-            g_ = int(self.BG_TOP[1] * (1 - t) + self.BG_BOTTOM[1] * t)
-            b = int(self.BG_TOP[2] * (1 - t) + self.BG_BOTTOM[2] * t)
-            g.line([(0, y), (self.diameter, y)], fill=(r, g_, b, 255))
+            r = int(top[0] * (1 - t) + bottom[0] * t)
+            g = int(top[1] * (1 - t) + bottom[1] * t)
+            b = int(top[2] * (1 - t) + bottom[2] * t)
+            d.line([(0, y), (self.diameter, y)], fill=(r, g, b, 255))
+        return img
 
-        # 원형 마스크
-        mask = Image.new("L", (self.diameter, self.diameter), 0)
-        md = ImageDraw.Draw(mask)
-        md.ellipse((0, 0, self.diameter, self.diameter), fill=255)
+    def _draw_sun_moon(self, canvas: Image.Image, phase: int, temp_c: Optional[float], ts: Optional[float]):
+        # 위치: 시간대에 따라 좌→우 이동
+        if ts is None:
+            hour = datetime.now().hour + datetime.now().minute / 60.0
+        else:
+            dt = datetime.fromtimestamp(ts)
+            hour = dt.hour + dt.minute / 60.0
 
-        # 링(테두리)
-        self._ring(g, (self.center, self.center), self.center - 2, 2, self.RING)
+        # x: 8h~18h 사이 가장 높음
+        t = (hour - 6) / 12.0  # 6h 기준
+        t = max(0.0, min(1.0, t))
+        x = int(self.diameter * (0.15 + 0.7 * t))
+        y = int(self.diameter * (0.22 - 0.12 * math.cos(t * math.pi)))  # 부드러운 포물선
 
-        # 데이터 없음 -> 심플 대기 화면
-        if not snapshot.has_payload():
-            draw = ImageDraw.Draw(bg)
-            self._draw_text(draw, "Waiting for data...", (self.center, self.center - 6), self.font_lg, self.TEXT_SUB)
-            now = datetime.now().strftime("%H:%M")
-            self._draw_text(draw, now, (self.center, self.center + 34), self.font_md, self.TEXT_SUB)
-            final = Image.new("RGBA", (self.diameter, self.diameter), (255, 255, 255, 0))
-            final.paste(bg, (0, 0), mask)
-            return final.convert("RGB")
+        if phase == 0:  # night -> 달
+            self._soft_glow(canvas, x, y, 22, (200, 220, 255), alpha=140, blur=20)
+            ld = ImageDraw.Draw(canvas)
+            ld.ellipse((x - 12, y - 12, x + 12, y + 12), fill=(230, 240, 255, 240))
+        else:  # sun
+            # 온도 영향: 뜨거울수록 크고 더 오렌지
+            tr = 0.0 if temp_c is None else max(0.0, min(1.0, temp_c / 40.0))
+            radius = 14 + 10 * tr
+            col = (255, int(220 - 80 * tr), int(140 - 90 * tr))
+            self._soft_glow(canvas, x, y, radius + 10, col, alpha=180, blur=18)
+            ld = ImageDraw.Draw(canvas)
+            ld.ellipse((x - radius, y - radius, x + radius, y + radius), fill=col + (230,))
 
-        # 실제 콘텐츠 렌더
-        canvas = bg.copy()
-        draw = ImageDraw.Draw(canvas)
+    def _cloud_color(self, pm25: Optional[float]) -> tuple[int, int, int, int]:
+        if pm25 is None:
+            return (255, 255, 255, 210)
+        intensity = min(max(pm25 / 150.0, 0.0), 1.0)
+        base = 255 - int(120 * intensity)
+        alpha = 210 - int(80 * intensity)
+        return (base, base, base, max(100, alpha))
 
-        # 중앙 메인 값 (온도 우선, 없으면 습도)
-        self._draw_center(draw, canvas, snapshot)
+    def _draw_clouds(self, canvas: Image.Image, pm25: Optional[float], tsec: float):
+        # 구름은 느리게 좌→우로 이동
+        w, h = self.diameter, self.diameter
+        col = self._cloud_color(pm25)
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        random.seed(self.scene_seed)  # 장면 고정
 
-        # 주요 3 카드 (TEMP/HUM/PM2.5) 원형 배치
-        self._draw_sensor_cards(draw, canvas, snapshot)
+        for i in range(5):
+            base_y = int(h * (0.18 + 0.12 * i))
+            size = int(40 + i * 8)
+            speed = 6 + i * 2
+            base_x = int((tsec * speed + 60 * i) % (w + 120)) - 60
+            parts = [
+                (base_x - size//2, base_y, size),
+                (base_x, base_y - size//6, size + 8),
+                (base_x + size//2, base_y + size//10, size - 6),
+                (base_x + size, base_y, size//2),
+            ]
+            for cx, cy, s in parts:
+                d.ellipse((cx - s, cy - s, cx + s, cy + s), fill=col)
 
-        # 하단 보조 정보 (소음 / PIR / 시간 / 상태)
-        self._draw_footer(draw, canvas, snapshot)
+        # 약간 블러로 부드럽게
+        layer = layer.filter(ImageFilter.GaussianBlur(1.2))
+        canvas.alpha_composite(layer)
 
-        # 원형 클리핑
-        final = Image.new("RGBA", (self.diameter, self.diameter), (255, 255, 255, 0))
-        final.paste(canvas, (0, 0), mask)
-        return final.convert("RGB")
+    def _draw_haze(self, canvas: Image.Image, pm25: Optional[float], hum: Optional[float]):
+        # PM2.5/습도 높을수록 헤이즈+연무 강조
+        pm = 0.0 if pm25 is None else min(pm25, 150.0) / 150.0
+        hm = 0.0 if hum is None else min(max(hum - 60.0, 0.0) / 40.0, 1.0)
+        alpha = int(30 + 90 * max(pm, hm))
+        haze = Image.new("RGBA", canvas.size, (220, 225, 230, alpha))
+        canvas.alpha_composite(haze)
 
-    # ---- 섹션: 중앙 메인 값 ----
-    def _draw_center(self, draw: ImageDraw.ImageDraw, base: Image.Image, snapshot: SensorSnapshot):
-        cx, cy = self.center, self.center
-        # 얇은 내부 링
-        self._ring(draw, (cx, cy), self.center * 0.62, 2, self.RING)
+    def _draw_hills(self, canvas: Image.Image):
+        w, h = self.diameter, self.diameter
+        y_base = int(h * 0.72)
 
-        # 카드
-        card_w, card_h = int(self.diameter * 0.56), int(self.diameter * 0.30)
-        rect = (
-            int(cx - card_w / 2),
-            int(cy - card_h / 2),
-            int(cx + card_w / 2),
-            int(cy + card_h / 2),
-        )
-        self._rounded_rect(base, rect, radius=28, fill=self.CARD_FILL + (240,), outline=self.CARD_BORDER, width=2, shadow=True)
+        def hill_layer(offset: float, amp: float, step: int, color: tuple[int, int, int], blur=0):
+            layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(layer)
+            points = []
+            for x in range(0, w + step, step):
+                y = y_base + int(math.sin((x + offset) * 0.012) * amp) + int(math.sin((x + 2*offset) * 0.004) * amp * 0.6)
+                points.append((x, y))
+            points = [(0, h), (0, points[0][1])] + points + [(w, points[-1][1]), (w, h)]
+            d.polygon(points, fill=color + (255,))
+            if blur:
+                layer = layer.filter(ImageFilter.GaussianBlur(blur))
+            canvas.alpha_composite(layer)
 
-        # 디바이스 / 시간
+        # 뒤→앞 (대기원근, 밝게→짙게)
+        hill_layer(30, 8, 8, self.HILL_3, blur=2)
+        hill_layer(0, 12, 6, self.HILL_2, blur=1)
+        hill_layer(-20, 18, 5, self.HILL_1, blur=0)
+
+    def _draw_grass(self, canvas: Image.Image, tsec: float, wind_strength: float):
+        w, h = self.diameter, self.diameter
+        y_start = int(h * 0.78)
+        d = ImageDraw.Draw(canvas)
+
+        # 바닥 초록 그라디언트
+        for y in range(y_start, h):
+            t = (y - y_start) / max(1, (h - y_start))
+            r = int(self.GRASS_FAR[0] * (1 - t) + self.GRASS_NEAR[0] * t)
+            g = int(self.GRASS_FAR[1] * (1 - t) + self.GRASS_NEAR[1] * t)
+            b = int(self.GRASS_FAR[2] * (1 - t) + self.GRASS_NEAR[2] * t)
+            # 원형 클리핑 고려: 좌우 여백 줄이기
+            radius_at_y = math.sqrt(max(self.center ** 2 - (y - self.center) ** 2, 0))
+            x0 = int(self.center - radius_at_y)
+            x1 = int(self.center + radius_at_y)
+            d.line([(x0, y), (x1, y)], fill=(r, g, b, 255))
+
+        # 앞으로 들어오는 잔디 줄기 (가까운 영역만)
+        blades = 42
+        for i in range(blades):
+            base_x = int(self.center - self.diameter * 0.35 + (i / (blades - 1)) * self.diameter * 0.70)
+            base_y = int(h * 0.90 + (i % 5) - 2)
+            height = 18 + (i % 9)
+            sway = math.sin(tsec * (1.4 + 0.1 * i) + i * 0.35) * (1.0 + wind_strength * 1.8)
+            top_x = base_x + sway
+            top_y = base_y - height
+            col = (60 + (i % 3) * 10, 160 + (i % 4) * 10, 70 + (i % 5) * 6)
+            d.line([(base_x, base_y), (top_x, top_y)], fill=col + (255,), width=2)
+
+    def _draw_ripple(self, canvas: Image.Image, tsec: float, trigger: bool):
+        # PIR로 트리거, 일정 시간 감쇠
+        now = tsec
+        if trigger and self._ripple_start is None:
+            self._ripple_start = now
+        if self._ripple_start is None:
+            return
+        elapsed = now - self._ripple_start
+        if elapsed > 2.5:
+            self._ripple_start = None
+            return
+
+        cx, cy = int(self.center), int(self.diameter * 0.82)
+        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        rings = 5
+        for i in range(rings):
+            r = int(8 + (elapsed * 90) + i * 10)
+            alpha = max(0, 120 - int((elapsed * 60) + i * 18))
+            d.ellipse((cx - r, cy - 10 - r//6, cx + r, cy + r//6), outline=(200, 220, 255, alpha), width=1)
+        layer = layer.filter(ImageFilter.GaussianBlur(0.6))
+        canvas.alpha_composite(layer)
+
+    def _draw_dew(self, canvas: Image.Image, hum: Optional[float]):
+        if hum is None or hum < 82:
+            return
+        # 상단 좌우에 작은 물방울
+        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        drops = [(self.center - 90, self.diameter * 0.32), (self.center + 110, self.diameter * 0.28)]
+        for (x, y) in drops:
+            d.ellipse((x - 6, y - 10, x + 6, y + 6), fill=(180, 210, 255, 110))
+            d.ellipse((x - 2, y - 6, x + 1, y - 3), fill=(255, 255, 255, 160))
+        layer = layer.filter(ImageFilter.GaussianBlur(0.5))
+        canvas.alpha_composite(layer)
+
+    # ---- UI: 중앙 패널/카드/푸터 ----
+    def _draw_center_panel(self, draw: ImageDraw.ImageDraw, base: Image.Image, snapshot: SensorSnapshot):
+        cx, cy = self.center, self.center * 0.98
+        card_w, card_h = int(self.diameter * 0.62), int(self.diameter * 0.28)
+        rect = (int(cx - card_w / 2), int(cy - card_h / 2), int(cx + card_w / 2), int(cy + card_h / 2))
+        self._rounded_rect(base, rect, radius=28, fill=self.GLASS, outline=self.CARD_BORDER, width=2, shadow=True)
+
         device = snapshot.device_id or "Device"
         self._draw_text(draw, device, (cx, rect[1] + 22), self.font_sm, self.TEXT_SUB)
 
-        # 메인 값
-        main_txt = "---"
-        color = self.TEXT_MAIN
         if snapshot.temp_c is not None:
             main_txt = f"{snapshot.temp_c:.1f}°C"
             color = self.TEMP_COLOR
         elif snapshot.hum is not None:
             main_txt = f"{snapshot.hum:.0f}%"
             color = self.HUM_COLOR
+        else:
+            main_txt, color = "---", self.TEXT_MAIN
 
-        self._draw_text(draw, main_txt, (cx, cy + 8), self.font_xl, color)
+        self._draw_text(draw, main_txt, (cx, cy + 6), self.font_xl, color)
 
-        # 상태 배지
         age = time.time() - snapshot.ingested_at
         if age < 5:  status, s_col = "● LIVE", self.LIVE
         elif age < 30: status, s_col = "● RECENT", self.RECENT
         else:        status, s_col = "● OLD", self.OLD
         self._draw_text(draw, status, (cx, rect[3] - 20), self.font_xs, s_col)
 
-    # ---- 섹션: 센서 카드 ----
     def _draw_sensor_cards(self, draw: ImageDraw.ImageDraw, base: Image.Image, snapshot: SensorSnapshot):
         items = [
             ("🌡️ TEMP", snapshot.temp_c, "°C", self.TEMP_COLOR),
             ("💧 HUM", snapshot.hum, "%", self.HUM_COLOR),
             ("🌫️ PM2.5", snapshot.pm25, "µg/m³", self.PM_COLOR),
         ]
-        data_items = [(l, v, u, c) for (l, v, u, c) in items if v is not None]
-        if not data_items:
-            return
-
-        card_w, card_h = 160, 96
-        radius = self.diameter * 0.34
-        total = max(3, len(items))  # 자리 간격은 고정 3분할
+        card_w, card_h = 168, 98
+        radius = self.diameter * 0.36
+        total = 3
         for i, (label, value, unit, color) in enumerate(items):
-            # 미표시 값도 자리 유지 (시각적 균형)
-            angle = (-90 + i * (360 / total)) * math.pi / 180.0
+            angle = (-85 + i * (360 / total)) * math.pi / 180.0
             x = self.center + radius * math.cos(angle)
-            y = self.center + radius * math.sin(angle)
-
+            y = self.center - self.diameter * 0.08 + radius * math.sin(angle)
             rect = (int(x - card_w / 2), int(y - card_h / 2), int(x + card_w / 2), int(y + card_h / 2))
-            self._rounded_rect(base, rect, radius=18, fill=self.CARD_FILL + (235,), outline=self.CARD_BORDER, width=2, shadow=True)
-
-            # 라벨
+            self._rounded_rect(base, rect, radius=18, fill=(255, 255, 255, 225), outline=self.CARD_BORDER, width=2, shadow=True)
             self._draw_text(draw, label, (x, rect[1] + 20), self.font_xs, self.TEXT_SUB)
-
-            # 값
             if value is None:
                 self._draw_text(draw, "--", (x, y + 6), self.font_lg, self.TEXT_SUB)
             else:
-                self._draw_text(draw, f"{value:.1f}", (x - 20, y + 6), self.font_lg, color)
-                self._draw_text(draw, unit, (x + 52, y + 10), self.font_sm, color)
+                self._draw_text(draw, f"{value:.1f}", (x - 22, y + 6), self.font_lg, color)
+                self._draw_text(draw, unit, (x + 56, y + 10), self.font_sm, color)
 
-    # ---- 섹션: 하단 보조 정보 ----
     def _draw_footer(self, draw: ImageDraw.ImageDraw, base: Image.Image, snapshot: SensorSnapshot):
-        cx, cy = self.center, self.center
-        y = int(self.diameter * 0.86)
-
-        # 얇은 구분선
+        cx, y = self.center, int(self.diameter * 0.90)
         draw.line([(int(cx - self.diameter * 0.28), y - 24), (int(cx + self.diameter * 0.28), y - 24)],
                   fill=self.CARD_BORDER, width=1)
-
-        # 시간
         now = datetime.now().strftime("%H:%M")
         self._draw_text(draw, f"🕒 {now}", (cx, y), self.font_sm, self.TEXT_SUB)
-
-        # 소음
         if snapshot.noise is not None:
             self._draw_text(draw, f"  ·  🔊 {int(snapshot.noise)} dB", (cx + 90, y), self.font_sm, self.TEXT_SUB)
-        # PIR
         if snapshot.pir is not None:
-            pir_icon = "👁️" if snapshot.pir else "😴"
-            self._draw_text(draw, f"  ·  {pir_icon}", (cx + 220, y), self.font_sm, self.TEXT_SUB)
+            icon = "👁️" if snapshot.pir else "😴"
+            self._draw_text(draw, f"  ·  {icon}", (cx + 220, y), self.font_sm, self.TEXT_SUB)
+
+    # ---- 메인 렌더 ----
+    def render(self, snapshot: SensorSnapshot) -> Image.Image:
+        phase = self._phase_from_time(snapshot.ts or time.time())
+        pm = snapshot.pm25 if snapshot.pm25 is not None else 0.0
+        pm_tier = 0 if pm < 35 else (1 if pm < 75 else 2)
+
+        # 배경 캐시(시간대/PM tier/크기)
+        cache_key = (phase, pm_tier, self.diameter)
+        bg = self.bg_cache.get(cache_key)
+        tsec = time.time()
+        if bg is None:
+            # 하늘
+            sky = self._draw_sky(phase)
+            # 태양/달
+            self._draw_sun_moon(sky, phase, snapshot.temp_c, snapshot.ts)
+            # 구름(초기 위치)
+            self._draw_clouds(sky, snapshot.pm25, tsec * 0)  # 정지 상태로 캡처
+            # 언덕
+            self._draw_hills(sky)
+            # 헤이즈(기본 pm tier 반영)
+            self._draw_haze(sky, snapshot.pm25, snapshot.hum)
+            self.bg_cache.set(cache_key, sky)
+            bg = sky
+
+        # 동적요소를 위한 복사본
+        canvas = bg.copy()
+        draw = ImageDraw.Draw(canvas)
+
+        # 구름 애니메이션(느리게)
+        self._draw_clouds(canvas, snapshot.pm25, tsec * 0.10)
+
+        # 잔디 스웨이 & 바닥
+        wind_strength = 0.0
+        if snapshot.pir:
+            wind_strength += 0.9
+        if snapshot.noise is not None:
+            # 40~80dB → 0~1
+            wind_strength += max(0.0, min(1.0, (snapshot.noise - 40.0) / 40.0)) * 0.6
+        self._draw_grass(canvas, tsec, wind_strength)
+
+        # 습도 물방울/연무 강조
+        self._draw_dew(canvas, snapshot.hum)
+
+        # PIR 물결 리플
+        self._draw_ripple(canvas, tsec, bool(snapshot.pir))
+
+        # 중앙 패널/카드/푸터
+        self._draw_center_panel(draw, canvas, snapshot)
+        self._draw_sensor_cards(draw, canvas, snapshot)
+        self._draw_footer(draw, canvas, snapshot)
+
+        # 원형 마스크/링
+        mask = Image.new("L", (self.diameter, self.diameter), 0)
+        md = ImageDraw.Draw(mask)
+        md.ellipse((0, 0, self.diameter, self.diameter), fill=255)
+        final = Image.new("RGBA", (self.diameter, self.diameter), (255, 255, 255, 0))
+        final.paste(canvas, (0, 0), mask)
+
+        ring_draw = ImageDraw.Draw(final)
+        self._ring(ring_draw, (self.center, self.center), self.center - 2, 2, self.RING)
+
+        return final.convert("RGB")
 
     # ---- 프레젠트 ----
     def present(self, image: Image.Image) -> None:
@@ -588,8 +804,6 @@ class KafkaSensorStream:
             print(f"[Kafka] 소비자 생성 완료")
             consumer.subscribe([settings.sensor_topic])
             print(f"[Kafka] 토픽 구독 완료: {settings.sensor_topic}")
-            if self.debug:
-                print(f"[Kafka] 토픽 구독: {settings.sensor_topic}")
         except Exception as exc:
             print(f"[Kafka] 소비자 초기화 실패: {exc}")
             return
@@ -630,7 +844,7 @@ class KafkaSensorStream:
 # 엔트리 포인트
 # -----------------------------
 def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Kafka -> 원형 디스플레이 센서 뷰어 (미니멀 UI)")
+    p = argparse.ArgumentParser(description="Kafka -> 원형 디스플레이 센서 뷰어 (현실적 자연 테마)")
     p.add_argument("--diameter", type=int, default=settings.diameter_pixels, help="디스플레이 지름(px)")
     p.add_argument("--font", type=str, default=settings.font_path, help="TTF 폰트 경로")
     p.add_argument("--refresh-hz", type=float, default=settings.display_refresh_hz, help="화면 갱신 주기(Hz)")
@@ -653,7 +867,7 @@ def main() -> None:
     refresh_period = 1.0 / refresh_hz
 
     dump_dir = Path(args.frame_dump) if args.frame_dump else None
-    display = CircularSensorDisplay(
+    display = CircularNaturalDisplay(
         diameter=args.diameter,
         font_path=args.font,
         dump_dir=dump_dir,
@@ -678,7 +892,7 @@ def main() -> None:
 
             now = time.time()
             if now >= next_frame:
-                image = display.render(latest)
+                image = display.render(latest if latest.has_payload() else latest)
                 display.present(image)
                 next_frame = now + refresh_period
     except KeyboardInterrupt:

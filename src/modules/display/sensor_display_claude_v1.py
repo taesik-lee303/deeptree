@@ -1,8 +1,6 @@
 """Kafka 파이프라인을 통해 수집한 UART 센서 값을 2.1인치 원형 디스플레이에 맞춰 렌더링.
 
-- kafka-python 소비자를 이용해 sensors.uart(기본) 토픽을 지속적으로 구독
-- 메시지 페이로드는 uart_receiver.py와 동일/유사한 스키마(JSON)를 예상
-- Pillow를 이용해 480x480(기본) 원형 레이아웃을 구성하고, 실제 디스플레이 드라이버에 이미지를 전달
+자연적이고 현실적인 디자인으로 센서 데이터를 시각화합니다.
 """
 from __future__ import annotations
 
@@ -10,12 +8,13 @@ import argparse
 import json
 import math
 import queue
+import random
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple, List
 
 try:
     from kafka import KafkaConsumer
@@ -55,37 +54,49 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from networks.kafka.kafka_config import settings
 
 
-# 모던한 컬러 팔레트
-class Colors:
-    # 배경 그라디언트
-    BG_TOP = (25, 28, 50)  # 다크 네이비
-    BG_BOTTOM = (45, 55, 80)  # 미드나이트 블루
+class NaturalColors:
+    """자연적인 색상 팔레트"""
     
-    # 메인 색상
-    PRIMARY = (100, 200, 255)  # 스카이 블루
-    SECONDARY = (255, 100, 150)  # 코랄 핑크
-    ACCENT = (150, 255, 200)  # 민트
+    @staticmethod
+    def get_sky_gradient(hour: int) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+        """시간대별 하늘 그라디언트"""
+        # 0-23시 기준
+        if 5 <= hour < 7:  # 새벽
+            return (20, 30, 60), (100, 120, 180)  # 남색 -> 연한 파랑
+        elif 7 <= hour < 9:  # 아침
+            return (135, 170, 220), (255, 200, 150)  # 하늘색 -> 따뜻한 노을
+        elif 9 <= hour < 17:  # 낮
+            return (135, 206, 250), (220, 240, 255)  # 맑은 하늘색
+        elif 17 <= hour < 19:  # 저녁
+            return (255, 150, 100), (120, 100, 180)  # 노을 -> 보라
+        elif 19 <= hour < 21:  # 황혼
+            return (70, 80, 120), (30, 40, 80)  # 짙은 파랑
+        else:  # 밤
+            return (10, 15, 40), (30, 40, 70)  # 검은 남색
     
-    # 상태 색상
-    SUCCESS = (100, 255, 150)  # 그린
-    WARNING = (255, 200, 100)  # 앰버
-    DANGER = (255, 100, 100)  # 레드
+    @staticmethod
+    def get_sun_color(temp: float) -> Tuple[int, ...]:
+        """온도에 따른 태양 색상"""
+        if temp < 10:
+            return (255, 220, 180)  # 차가운 백색
+        elif temp < 20:
+            return (255, 235, 150)  # 연한 노랑
+        elif temp < 30:
+            return (255, 220, 100)  # 밝은 노랑
+        else:
+            return (255, 180, 80)  # 뜨거운 주황
     
-    # 텍스트 색상
-    TEXT_PRIMARY = (255, 255, 255)
-    TEXT_SECONDARY = (200, 210, 230)
-    TEXT_MUTED = (120, 140, 170)
-    
-    # 카드 색상
-    CARD_BG = (35, 40, 65, 200)  # 반투명 다크
-    CARD_BORDER = (80, 90, 120, 100)
-    
-    # 센서별 테마 색상
-    TEMP_COLOR = (255, 120, 90)  # 웜 오렌지
-    HUMIDITY_COLOR = (90, 180, 255)  # 쿨 블루
-    PM_COLOR = (180, 120, 255)  # 퍼플
-    NOISE_COLOR = (255, 200, 100)  # 옐로
-    MOTION_COLOR = (100, 255, 200)  # 그린
+    @staticmethod
+    def get_cloud_color(pm25: float) -> Tuple[int, ...]:
+        """미세먼지 농도에 따른 구름 색상"""
+        if pm25 < 15:
+            return (255, 255, 255)  # 깨끗한 흰색
+        elif pm25 < 35:
+            return (230, 230, 230)  # 연한 회색
+        elif pm25 < 75:
+            return (180, 180, 180)  # 회색
+        else:
+            return (140, 140, 140)  # 짙은 회색
 
 
 @dataclass
@@ -107,6 +118,62 @@ class SensorSnapshot:
             value is not None
             for value in (self.temp_c, self.hum, self.noise, self.pir, self.pm1, self.pm25, self.pm10)
         )
+
+
+class ParticleSystem:
+    """자연스러운 파티클 효과 시스템"""
+    
+    def __init__(self, max_particles: int = 50):
+        self.particles: List[Dict[str, Any]] = []
+        self.max_particles = max_particles
+    
+    def add_particle(self, x: float, y: float, vx: float, vy: float, 
+                    size: float, color: Tuple[int, ...], lifetime: float):
+        """파티클 추가"""
+        if len(self.particles) < self.max_particles:
+            self.particles.append({
+                'x': x, 'y': y,
+                'vx': vx, 'vy': vy,
+                'size': size,
+                'color': color,
+                'lifetime': lifetime,
+                'age': 0
+            })
+    
+    def update(self, dt: float):
+        """파티클 업데이트"""
+        self.particles = [
+            p for p in self.particles 
+            if p['age'] < p['lifetime']
+        ]
+        
+        for p in self.particles:
+            p['x'] += p['vx'] * dt
+            p['y'] += p['vy'] * dt
+            p['age'] += dt
+            # 중력 효과
+            p['vy'] += 50 * dt
+    
+    def draw(self, draw: ImageDraw.ImageDraw, center: float, radius: float):
+        """파티클 그리기"""
+        for p in self.particles:
+            # 원형 경계 체크
+            dx = p['x'] - center
+            dy = p['y'] - center
+            if dx*dx + dy*dy > radius*radius:
+                continue
+            
+            # 페이드 효과
+            alpha = 1.0 - (p['age'] / p['lifetime'])
+            size = p['size'] * (1 + p['age'] * 0.5)  # 시간에 따라 커짐
+            
+            if alpha > 0:
+                color = p['color'][:3] + (int(alpha * 255),)
+                draw.ellipse(
+                    [p['x'] - size, p['y'] - size, 
+                     p['x'] + size, p['y'] + size],
+                    fill=color
+                )
 
 
 def _pick(d: Dict[str, Any], keys: Iterable[str]) -> Any:
@@ -239,27 +306,25 @@ class TkinterDisplayDriver:
             raise RuntimeError(f"Tkinter import 실패: {_TKINTER_IMPORT_ERROR}")
         self.diameter = diameter
         self.root = tk.Tk()
-        self.root.title("Modern Sensor Display")
+        self.root.title("Natural Sensor Display")
         self.root.geometry(f"{diameter + 20}x{diameter + 50}")
         self.root.configure(bg="black")
 
         self.label = Label(self.root, bg="black")
         self.label.pack(pady=10)
 
-        # 창을 맨 앞으로 가져오기
         self.root.lift()
         self.root.attributes('-topmost', True)
         self.root.after_idle(lambda: self.root.attributes('-topmost', False))
 
     def display(self, image: Image.Image):
-        # PIL 이미지를 Tkinter가 사용할 수 있는 형태로 변환
         photo = ImageTk.PhotoImage(image)
         self.label.configure(image=photo)
-        self.label.image = photo  # 참조 유지
+        self.label.image = photo
         self.root.update()
 
 
-class ModernCircularDisplay:
+class NaturalCircularDisplay:
     def __init__(
         self,
         *,
@@ -294,28 +359,33 @@ class ModernCircularDisplay:
         self.frame_index = 0
         
         # 폰트 설정
-        self.font_large = self._load_font(font_path, 72)
-        self.font_medium = self._load_font(font_path, 36)
-        self.font_small = self._load_font(font_path, 24)
-        self.font_tiny = self._load_font(font_path, 18)
-        self.font_micro = self._load_font(font_path, 14)
+        self.font_xlarge = self._load_font(font_path, 64)
+        self.font_large = self._load_font(font_path, 42)
+        self.font_medium = self._load_font(font_path, 28)
+        self.font_small = self._load_font(font_path, 20)
+        self.font_tiny = self._load_font(font_path, 16)
         
-        # 애니메이션 상태
+        # 애니메이션 및 효과 상태
         self.animation_time = 0
+        self.particle_system = ParticleSystem()
+        self.cloud_positions = self._init_cloud_positions()
+        self.stars = self._init_stars()
+        self.fireflies = []  # 반딧불이
+        self.rain_drops = []  # 빗방울
+        self.wind_strength = 0
+        self.last_pir_time = 0
 
     def _load_font(self, font_path: str | None, size: int) -> ImageFont.ImageFont:
         candidates = []
         if font_path:
             candidates.append(Path(font_path))
         
-        # 시스템 폰트 경로들
         candidates.extend(
-            Path(p)
-            for p in (
-                "C:/Windows/Fonts/segoeui.ttf",  # Windows
+            Path(p) for p in (
+                "C:/Windows/Fonts/segoeui.ttf",
                 "C:/Windows/Fonts/malgun.ttf",
-                "/System/Library/Fonts/Helvetica.ttc",  # macOS
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+                "/System/Library/Fonts/Helvetica.ttc",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             )
         )
@@ -329,347 +399,483 @@ class ModernCircularDisplay:
         
         return ImageFont.load_default()
 
-    def _draw_text(
-        self,
-        draw: ImageDraw.ImageDraw,
-        text: str,
-        xy: Tuple[float, float],
-        font: ImageFont.ImageFont,
-        fill: Tuple[int, ...],
-        anchor: str = "mm"
-    ) -> None:
-        """텍스트 그리기 (anchor 지원)"""
-        draw.text(xy, text, font=font, fill=fill, anchor=anchor)
+    def _init_cloud_positions(self) -> List[Dict[str, float]]:
+        """구름 초기 위치"""
+        return [
+            {'x': self.radius * 0.3, 'y': self.radius * 0.4, 'size': 40, 'speed': 0.1},
+            {'x': self.radius * 1.5, 'y': self.radius * 0.3, 'size': 50, 'speed': 0.15},
+            {'x': self.radius * 1.2, 'y': self.radius * 0.5, 'size': 35, 'speed': 0.08},
+        ]
+    
+    def _init_stars(self) -> List[Dict[str, float]]:
+        """별 초기화"""
+        stars = []
+        for _ in range(30):
+            angle = random.uniform(0, 2 * math.pi)
+            distance = random.uniform(self.radius * 0.3, self.radius * 0.9)
+            stars.append({
+                'x': self.center + distance * math.cos(angle),
+                'y': self.center + distance * math.sin(angle),
+                'brightness': random.uniform(0.3, 1.0),
+                'twinkle_speed': random.uniform(1, 3)
+            })
+        return stars
 
-    def _draw_gradient_background(self, draw: ImageDraw.ImageDraw, img: Image.Image) -> None:
-        """원형 그라디언트 배경"""
-        # 방사형 그라디언트 생성
-        for i in range(self.diameter):
-            for j in range(self.diameter):
-                # 중심으로부터의 거리 계산
-                dx = i - self.center
-                dy = j - self.center
+    def _draw_realistic_sky(self, draw: ImageDraw.ImageDraw, img: Image.Image, hour: int):
+        """시간대별 현실적인 하늘 그라디언트"""
+        color_top, color_bottom = NaturalColors.get_sky_gradient(hour)
+        
+        # 부드러운 원형 그라디언트
+        for y in range(self.diameter):
+            for x in range(self.diameter):
+                dx = x - self.center
+                dy = y - self.center
                 distance = math.sqrt(dx * dx + dy * dy)
                 
                 if distance <= self.radius:
-                    # 정규화된 거리 (0 = 중심, 1 = 가장자리)
-                    normalized = distance / self.radius
+                    # 중심에서 가장자리로 갈수록 어두워지는 비네팅 효과
+                    vignette = 1.0 - (distance / self.radius) * 0.3
                     
-                    # 그라디언트 색상 계산
-                    r = int(Colors.BG_TOP[0] * (1 - normalized) + Colors.BG_BOTTOM[0] * normalized)
-                    g = int(Colors.BG_TOP[1] * (1 - normalized) + Colors.BG_BOTTOM[1] * normalized)
-                    b = int(Colors.BG_TOP[2] * (1 - normalized) + Colors.BG_BOTTOM[2] * normalized)
+                    # 수직 그라디언트
+                    vertical_grad = y / self.diameter
                     
-                    img.putpixel((i, j), (r, g, b))
+                    # 색상 보간
+                    r = int((color_top[0] * (1 - vertical_grad) + color_bottom[0] * vertical_grad) * vignette)
+                    g = int((color_top[1] * (1 - vertical_grad) + color_bottom[1] * vertical_grad) * vignette)
+                    b = int((color_top[2] * (1 - vertical_grad) + color_bottom[2] * vertical_grad) * vignette)
+                    
+                    img.putpixel((x, y), (r, g, b))
 
-    def _draw_arc_indicator(
+    def _draw_sun_moon(self, draw: ImageDraw.ImageDraw, hour: int, temp: Optional[float]):
+        """태양 또는 달 그리기"""
+        if 6 <= hour < 18:  # 낮 - 태양
+            # 태양 위치 (시간에 따라 이동)
+            sun_angle = ((hour - 6) / 12) * math.pi  # 6시~18시를 0~π로
+            sun_x = self.center + self.radius * 0.6 * math.cos(sun_angle - math.pi/2)
+            sun_y = self.center - self.radius * 0.4 * math.sin(sun_angle)
+            
+            if temp is not None:
+                sun_color = NaturalColors.get_sun_color(temp)
+                sun_size = 20 + min(temp / 40 * 15, 15)  # 온도에 따라 크기 변화
+            else:
+                sun_color = (255, 220, 100)
+                sun_size = 25
+            
+            # 광채 효과 (여러 겹)
+            for i in range(4, 0, -1):
+                glow_size = sun_size + i * 15
+                alpha = int(30 * (1 / i))
+                glow_color = sun_color[:3] + (alpha,)
+                draw.ellipse(
+                    [sun_x - glow_size, sun_y - glow_size,
+                     sun_x + glow_size, sun_y + glow_size],
+                    fill=glow_color
+                )
+            
+            # 태양 본체
+            draw.ellipse(
+                [sun_x - sun_size, sun_y - sun_size,
+                 sun_x + sun_size, sun_y + sun_size],
+                fill=sun_color
+            )
+            
+            # 빛줄기 효과
+            if 9 <= hour <= 15:  # 한낮에만
+                for i in range(8):
+                    angle = i * math.pi / 4 + self.animation_time * 0.5
+                    for j in range(1, 4):
+                        ray_x = sun_x + math.cos(angle) * (sun_size + j * 20)
+                        ray_y = sun_y + math.sin(angle) * (sun_size + j * 20)
+                        ray_alpha = int(40 - j * 10)
+                        draw.ellipse(
+                            [ray_x - 2, ray_y - 2, ray_x + 2, ray_y + 2],
+                            fill=sun_color[:3] + (ray_alpha,)
+                        )
+        
+        else:  # 밤 - 달
+            moon_x = self.center - self.radius * 0.3
+            moon_y = self.center - self.radius * 0.3
+            moon_size = 20
+            
+            # 달빛 광채
+            for i in range(3, 0, -1):
+                glow_size = moon_size + i * 10
+                alpha = int(20 * (1 / i))
+                draw.ellipse(
+                    [moon_x - glow_size, moon_y - glow_size,
+                     moon_x + glow_size, moon_y + glow_size],
+                    fill=(200, 210, 255, alpha)
+                )
+            
+            # 달 본체
+            draw.ellipse(
+                [moon_x - moon_size, moon_y - moon_size,
+                 moon_x + moon_size, moon_y + moon_size],
+                fill=(240, 245, 255)
+            )
+            
+            # 달 표면 디테일
+            draw.ellipse(
+                [moon_x - 5, moon_y - 8, moon_x + 3, moon_y],
+                fill=(220, 225, 235)
+            )
+            draw.ellipse(
+                [moon_x + 5, moon_y + 3, moon_x + 10, moon_y + 8],
+                fill=(220, 225, 235)
+            )
+
+    def _draw_clouds(self, draw: ImageDraw.ImageDraw, humidity: Optional[float], pm25: Optional[float]):
+        """구름 그리기 (습도와 미세먼지 반영)"""
+        # 구름 밀도와 색상 결정
+        cloud_density = 0.3
+        if humidity is not None:
+            cloud_density += (humidity / 100) * 0.4
+        
+        cloud_color = (255, 255, 255)
+        if pm25 is not None:
+            cloud_color = NaturalColors.get_cloud_color(pm25)
+        
+        # 구름 이동
+        for cloud in self.cloud_positions:
+            cloud['x'] += cloud['speed']
+            if cloud['x'] > self.diameter + cloud['size']:
+                cloud['x'] = -cloud['size']
+            
+            # 원형 경계 체크
+            dx = cloud['x'] - self.center
+            dy = cloud['y'] - self.center
+            if dx*dx + dy*dy > (self.radius * 0.8) ** 2:
+                continue
+            
+            # 구름 그리기 (여러 원으로 구성)
+            base_alpha = int(150 * cloud_density)
+            for i in range(5):
+                offset_x = (i - 2) * cloud['size'] * 0.3
+                offset_y = math.sin(i) * cloud['size'] * 0.2
+                size_variation = cloud['size'] * (0.7 + random.random() * 0.3)
+                
+                alpha = min(base_alpha - i * 10, 255)
+                color = cloud_color[:3] + (alpha,)
+                
+                draw.ellipse(
+                    [cloud['x'] + offset_x - size_variation/2,
+                     cloud['y'] + offset_y - size_variation/2,
+                     cloud['x'] + offset_x + size_variation/2,
+                     cloud['y'] + offset_y + size_variation/2],
+                    fill=color
+                )
+
+    def _draw_rain(self, draw: ImageDraw.ImageDraw, humidity: Optional[float]):
+        """비 효과 (습도가 높을 때)"""
+        if humidity is not None and humidity > 70:
+            rain_intensity = (humidity - 70) / 30  # 70-100%를 0-1로
+            
+            # 빗방울 추가
+            if random.random() < rain_intensity:
+                for _ in range(int(5 * rain_intensity)):
+                    x = random.uniform(0, self.diameter)
+                    self.rain_drops.append({
+                        'x': x,
+                        'y': 0,
+                        'speed': random.uniform(5, 10),
+                        'length': random.uniform(10, 20)
+                    })
+            
+            # 빗방울 업데이트 및 그리기
+            self.rain_drops = [d for d in self.rain_drops if d['y'] < self.diameter]
+            
+            for drop in self.rain_drops:
+                drop['y'] += drop['speed']
+                
+                # 원형 경계 체크
+                dx = drop['x'] - self.center
+                dy = drop['y'] - self.center
+                if dx*dx + dy*dy > self.radius ** 2:
+                    continue
+                
+                # 빗줄기 그리기
+                alpha = int(100 * rain_intensity)
+                draw.line(
+                    [drop['x'], drop['y'], drop['x'], drop['y'] + drop['length']],
+                    fill=(150, 170, 200, alpha),
+                    width=1
+                )
+
+    def _draw_fireflies(self, draw: ImageDraw.ImageDraw, pir: Optional[int]):
+        """반딧불이 효과 (모션 감지 시)"""
+        if pir:
+            self.last_pir_time = time.time()
+        
+        # 최근 모션 감지 후 5초간 반딧불이 효과
+        if time.time() - self.last_pir_time < 5:
+            # 반딧불이 추가
+            if random.random() < 0.2:
+                angle = random.uniform(0, 2 * math.pi)
+                distance = random.uniform(self.radius * 0.4, self.radius * 0.8)
+                self.fireflies.append({
+                    'x': self.center + distance * math.cos(angle),
+                    'y': self.center + distance * math.sin(angle),
+                    'vx': random.uniform(-1, 1),
+                    'vy': random.uniform(-1, 1),
+                    'brightness': random.uniform(0, 1),
+                    'phase': random.uniform(0, 2 * math.pi)
+                })
+            
+            # 반딧불이 업데이트 및 그리기
+            self.fireflies = self.fireflies[-20:]  # 최대 20개
+            
+            for firefly in self.fireflies:
+                # 움직임
+                firefly['x'] += firefly['vx']
+                firefly['y'] += firefly['vy']
+                
+                # 원형 경계 체크
+                dx = firefly['x'] - self.center
+                dy = firefly['y'] - self.center
+                if dx*dx + dy*dy > self.radius ** 2:
+                    continue
+                
+                # 깜빡임
+                brightness = (math.sin(self.animation_time * 3 + firefly['phase']) + 1) / 2
+                firefly['brightness'] = brightness
+                
+                if brightness > 0.3:
+                    # 광채
+                    glow_size = 8 * brightness
+                    alpha = int(50 * brightness)
+                    draw.ellipse(
+                        [firefly['x'] - glow_size, firefly['y'] - glow_size,
+                         firefly['x'] + glow_size, firefly['y'] + glow_size],
+                        fill=(255, 255, 150, alpha)
+                    )
+                    
+                    # 중심점
+                    draw.ellipse(
+                        [firefly['x'] - 2, firefly['y'] - 2,
+                         firefly['x'] + 2, firefly['y'] + 2],
+                        fill=(255, 255, 200)
+                    )
+
+    def _draw_stars(self, draw: ImageDraw.ImageDraw, hour: int):
+        """별 그리기 (밤에만)"""
+        if hour < 6 or hour >= 19:  # 밤 시간대
+            for star in self.stars:
+                # 원형 경계 체크
+                dx = star['x'] - self.center
+                dy = star['y'] - self.center
+                if dx*dx + dy*dy > self.radius ** 2:
+                    continue
+                
+                # 반짝임 효과
+                twinkle = (math.sin(self.animation_time * star['twinkle_speed']) + 1) / 2
+                brightness = star['brightness'] * twinkle
+                
+                if brightness > 0.2:
+                    size = 1 + brightness
+                    alpha = int(200 * brightness)
+                    
+                    # 별 십자 모양
+                    color = (255, 255, 240, alpha)
+                    draw.line(
+                        [star['x'] - size, star['y'], star['x'] + size, star['y']],
+                        fill=color, width=1
+                    )
+                    draw.line(
+                        [star['x'], star['y'] - size, star['x'], star['y'] + size],
+                        fill=color, width=1
+                    )
+
+    def _draw_glass_card(
         self,
         draw: ImageDraw.ImageDraw,
-        value: float,
-        max_value: float,
-        start_angle: float,
-        end_angle: float,
-        radius: float,
-        width: int,
-        color: Tuple[int, ...],
-        bg_color: Tuple[int, ...] = (60, 70, 90, 100)
-    ) -> None:
-        """원호형 인디케이터"""
-        # 배경 원호
-        bbox = [
-            self.center - radius,
-            self.center - radius,
-            self.center + radius,
-            self.center + radius
-        ]
-        
-        # 배경 호
-        for i in range(width):
-            current_bbox = [
-                bbox[0] - i, bbox[1] - i,
-                bbox[2] + i, bbox[3] + i
-            ]
-            draw.arc(current_bbox, start_angle, end_angle, fill=bg_color, width=1)
-        
-        # 값 표시 호
-        if value is not None and max_value > 0:
-            value_angle = start_angle + (end_angle - start_angle) * min(value / max_value, 1.0)
-            for i in range(width):
-                current_bbox = [
-                    bbox[0] - i, bbox[1] - i,
-                    bbox[2] + i, bbox[3] + i
-                ]
-                draw.arc(current_bbox, start_angle, value_angle, fill=color, width=1)
-
-    def _draw_sensor_card(
-        self,
-        draw: ImageDraw.ImageDraw,
-        x: float,
-        y: float,
-        width: float,
-        height: float,
-        title: str,
-        value: Optional[float],
-        unit: str,
-        color: Tuple[int, ...],
-        icon: str = ""
-    ) -> None:
-        """모던한 센서 카드"""
-        # 카드 배경 (둥근 모서리)
+        x: float, y: float,
+        width: float, height: float,
+        content_callback,
+        bg_alpha: int = 180
+    ):
+        """글라스모피즘 카드"""
+        # 카드 영역
         card_rect = [x - width/2, y - height/2, x + width/2, y + height/2]
         
-        # 그림자 효과
-        shadow_rect = [card_rect[0] + 2, card_rect[1] + 2, card_rect[2] + 2, card_rect[3] + 2]
-        draw.rounded_rectangle(shadow_rect, radius=12, fill=(20, 25, 40, 150))
-        
-        # 카드 배경
-        draw.rounded_rectangle(card_rect, radius=10, fill=(40, 45, 70, 220))
-        
-        # 카드 테두리 (얇고 은은한)
-        draw.rounded_rectangle(card_rect, radius=10, outline=(80, 90, 120, 100), width=1)
-        
-        # 아이콘
-        if icon:
-            self._draw_text(draw, icon, (x - width/3, y - height/4), self.font_small, color, "mm")
-        
-        # 타이틀
-        self._draw_text(draw, title, (x, y - height/3), self.font_micro, Colors.TEXT_MUTED, "mm")
-        
-        # 값
-        if value is not None:
-            value_text = f"{value:.1f}"
-            self._draw_text(draw, value_text, (x, y), self.font_medium, Colors.TEXT_PRIMARY, "mm")
-            self._draw_text(draw, unit, (x, y + height/4), self.font_tiny, Colors.TEXT_SECONDARY, "mm")
-        else:
-            self._draw_text(draw, "--", (x, y), self.font_medium, Colors.TEXT_MUTED, "mm")
-
-    def _draw_status_indicator(
-        self,
-        draw: ImageDraw.ImageDraw,
-        x: float,
-        y: float,
-        status: str,
-        color: Tuple[int, ...]
-    ) -> None:
-        """상태 표시기"""
-        # 깜빡이는 효과
-        pulse = abs(math.sin(self.animation_time * 3))
-        radius = 4 + pulse * 2
-        
-        # 외부 글로우
+        # 블러 효과를 위한 배경
+        blur_color = (255, 255, 255, bg_alpha // 4)
         for i in range(3):
-            alpha = int(50 * (1 - i/3) * pulse)
-            glow_color = color + (alpha,) if len(color) == 3 else color[:3] + (alpha,)
-            draw.ellipse(
-                [x - radius - i*2, y - radius - i*2, x + radius + i*2, y + radius + i*2],
-                fill=glow_color
-            )
-        
-        # 중심 점
-        draw.ellipse([x - radius, y - radius, x + radius, y + radius], fill=color)
-        
-        # 상태 텍스트
-        self._draw_text(draw, status, (x + 15, y), self.font_micro, Colors.TEXT_SECONDARY, "lm")
-
-    def _draw_center_display(
-        self,
-        draw: ImageDraw.ImageDraw,
-        snapshot: SensorSnapshot
-    ) -> None:
-        """중앙 메인 디스플레이"""
-        # 시간 표시
-        current_time = datetime.now().strftime("%H:%M")
-        self._draw_text(draw, current_time, (self.center, self.center - 60), 
-                       self.font_large, Colors.TEXT_PRIMARY, "mm")
-        
-        # 날짜 표시
-        current_date = datetime.now().strftime("%Y.%m.%d")
-        self._draw_text(draw, current_date, (self.center, self.center - 20), 
-                       self.font_tiny, Colors.TEXT_SECONDARY, "mm")
-        
-        # 디바이스 이름
-        device_name = snapshot.device_id or "Smart Sensor"
-        self._draw_text(draw, device_name, (self.center, self.center + 10), 
-                       self.font_small, Colors.TEXT_MUTED, "mm")
-        
-        # 연결 상태
-        age = time.time() - snapshot.ingested_at
-        if age < 5:
-            status = "LIVE"
-            color = Colors.SUCCESS
-        elif age < 30:
-            status = "ACTIVE"
-            color = Colors.WARNING
-        else:
-            status = "OFFLINE"
-            color = Colors.TEXT_MUTED
-        
-        self._draw_status_indicator(draw, self.center - 30, self.center + 40, status, color)
-
-    def _draw_waiting_state(self, draw: ImageDraw.ImageDraw) -> None:
-        """대기 상태 화면"""
-        # 로딩 애니메이션 (회전하는 원호)
-        loading_radius = 50
-        for i in range(4):
-            angle_offset = (self.animation_time * 100 + i * 90) % 360
-            start = angle_offset
-            end = angle_offset + 60
-            
-            alpha = int(255 * (0.3 + 0.2 * i))
-            color = Colors.PRIMARY[:3] + (alpha,)
-            
-            bbox = [
-                self.center - loading_radius,
-                self.center - loading_radius,
-                self.center + loading_radius,
-                self.center + loading_radius
+            blur_rect = [
+                card_rect[0] - i*2, card_rect[1] - i*2,
+                card_rect[2] + i*2, card_rect[3] + i*2
             ]
-            draw.arc(bbox, start, end, fill=color, width=3)
+            draw.rounded_rectangle(blur_rect, radius=15, fill=blur_color)
         
-        # 메시지
-        self._draw_text(draw, "Connecting", (self.center, self.center + 80), 
-                       self.font_small, Colors.TEXT_SECONDARY, "mm")
+        # 메인 글라스 배경
+        draw.rounded_rectangle(
+            card_rect, radius=12,
+            fill=(255, 255, 255, bg_alpha)
+        )
         
-        dots = "." * (int(self.animation_time * 2) % 4)
-        self._draw_text(draw, dots, (self.center + 50, self.center + 80), 
-                       self.font_small, Colors.TEXT_SECONDARY, "lm")
+        # 테두리
+        draw.rounded_rectangle(
+            card_rect, radius=12,
+            outline=(255, 255, 255, 100), width=1
+        )
+        
+        # 내부 컨텐츠
+        if content_callback:
+            content_callback(draw, x, y, width, height)
 
-    def _draw_sensor_ring(
-        self,
-        draw: ImageDraw.ImageDraw,
-        snapshot: SensorSnapshot
-    ) -> None:
-        """센서 데이터를 원형 링으로 표시"""
-        # 온도 표시 (상단)
-        if snapshot.temp_c is not None:
-            self._draw_arc_indicator(
-                draw, snapshot.temp_c, 50,  # 0-50도 범위
-                -120, -60,  # 상단 좌측 호
-                self.radius * 0.75, 8,
-                Colors.TEMP_COLOR
-            )
-            self._draw_sensor_card(
-                draw, self.center - 80, self.center - 120,
-                80, 50, "TEMP", snapshot.temp_c, "°C",
-                Colors.TEMP_COLOR, "🌡"
-            )
-        
-        # 습도 표시 (우측)
-        if snapshot.hum is not None:
-            self._draw_arc_indicator(
-                draw, snapshot.hum, 100,  # 0-100% 범위
-                -30, 30,  # 우측 호
-                self.radius * 0.75, 8,
-                Colors.HUMIDITY_COLOR
-            )
-            self._draw_sensor_card(
-                draw, self.center + 120, self.center,
-                80, 50, "HUM", snapshot.hum, "%",
-                Colors.HUMIDITY_COLOR, "💧"
-            )
-        
-        # PM2.5 표시 (하단)
-        if snapshot.pm25 is not None:
-            pm_quality = self._get_pm_quality(snapshot.pm25)
-            self._draw_arc_indicator(
-                draw, snapshot.pm25, 150,  # 0-150 범위
-                60, 120,  # 하단 우측 호
-                self.radius * 0.75, 8,
-                pm_quality["color"]
-            )
-            self._draw_sensor_card(
-                draw, self.center + 80, self.center + 120,
-                80, 50, "PM2.5", snapshot.pm25, "㎍",
-                pm_quality["color"], pm_quality["icon"]
-            )
-        
-        # 소음 표시 (좌측)
-        if snapshot.noise is not None:
-            self._draw_arc_indicator(
-                draw, snapshot.noise, 100,  # 0-100dB 범위
-                150, 210,  # 좌측 호
-                self.radius * 0.75, 8,
-                Colors.NOISE_COLOR
-            )
-            self._draw_sensor_card(
-                draw, self.center - 120, self.center,
-                80, 50, "NOISE", snapshot.noise, "dB",
-                Colors.NOISE_COLOR, "🔊"
-            )
-        
-        # PIR 모션 표시 (우하단)
-        if snapshot.pir is not None:
-            motion_color = Colors.MOTION_COLOR if snapshot.pir else Colors.TEXT_MUTED
-            motion_text = "Motion" if snapshot.pir else "Clear"
-            motion_icon = "👁" if snapshot.pir else "😴"
+    def _draw_sensor_value_card(self, draw: ImageDraw.ImageDraw, x: float, y: float, w: float, h: float,
+                                label: str, value: Optional[float], unit: str, color: Tuple[int, ...]):
+        """센서 값 카드 내용"""
+        if value is not None:
+            # 라벨
+            draw.text((x, y - h/4), label, font=self.font_tiny, fill=(80, 80, 80), anchor="mm")
             
-            # 모션 감지 시 펄스 효과
-            if snapshot.pir:
-                pulse = abs(math.sin(self.animation_time * 5))
-                for i in range(3):
-                    alpha = int(30 * (1 - i/3) * pulse)
-                    draw.ellipse(
-                        [self.center + 80 - 30 - i*5, self.center + 60 - 30 - i*5,
-                         self.center + 80 + 30 + i*5, self.center + 60 + 30 + i*5],
-                        fill=motion_color[:3] + (alpha,)
-                    )
+            # 값
+            value_text = f"{value:.1f}"
+            draw.text((x, y), value_text, font=self.font_large, fill=color, anchor="mm")
             
-            self._draw_text(draw, motion_icon, (self.center + 80, self.center + 60),
-                           self.font_medium, motion_color, "mm")
-            self._draw_text(draw, motion_text, (self.center + 80, self.center + 80),
-                           self.font_micro, Colors.TEXT_SECONDARY, "mm")
-
-    def _get_pm_quality(self, pm25: float) -> Dict[str, Any]:
-        """PM2.5 공기질 상태"""
-        if pm25 <= 15:
-            return {"status": "Good", "color": Colors.SUCCESS, "icon": "😊"}
-        elif pm25 <= 35:
-            return {"status": "Moderate", "color": Colors.WARNING, "icon": "😐"}
-        elif pm25 <= 75:
-            return {"status": "Poor", "color": Colors.DANGER, "icon": "😷"}
+            # 단위
+            draw.text((x, y + h/4), unit, font=self.font_small, fill=(100, 100, 100), anchor="mm")
         else:
-            return {"status": "Hazardous", "color": (150, 50, 50), "icon": "☠"}
+            draw.text((x, y), "--", font=self.font_large, fill=(180, 180, 180), anchor="mm")
+
+    def _draw_info_panel(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot):
+        """정보 패널"""
+        hour = datetime.now().hour
+        
+        # 중앙 시계 (글라스 카드)
+        def draw_clock_content(d, x, y, w, h):
+            current_time = datetime.now().strftime("%H:%M")
+            current_date = datetime.now().strftime("%m/%d")
+            device_name = snapshot.device_id or "Nature Sensor"
+            
+            d.text((x, y - 15), current_time, font=self.font_xlarge, 
+                  fill=(30, 30, 50), anchor="mm")
+            d.text((x, y + 25), current_date, font=self.font_small, 
+                  fill=(80, 80, 100), anchor="mm")
+            d.text((x, y + 45), device_name, font=self.font_tiny, 
+                  fill=(120, 120, 140), anchor="mm")
+        
+        self._draw_glass_card(
+            draw, self.center, self.center,
+            180, 140,
+            draw_clock_content,
+            bg_alpha=160
+        )
+        
+        # 센서 카드들 (원형 배치)
+        sensors = []
+        if snapshot.temp_c is not None:
+            sensors.append(("온도", snapshot.temp_c, "°C", (255, 120, 80)))
+        if snapshot.hum is not None:
+            sensors.append(("습도", snapshot.hum, "%", (100, 180, 255)))
+        if snapshot.pm25 is not None:
+            sensors.append(("미세먼지", snapshot.pm25, "㎍/㎥", (180, 120, 255)))
+        if snapshot.noise is not None:
+            sensors.append(("소음", snapshot.noise, "dB", (255, 200, 100)))
+        
+        if sensors:
+            angle_step = 2 * math.pi / len(sensors)
+            radius = self.radius * 0.65
+            
+            for i, (label, value, unit, color) in enumerate(sensors):
+                angle = i * angle_step - math.pi / 2
+                card_x = self.center + radius * math.cos(angle)
+                card_y = self.center + radius * math.sin(angle)
+                
+                # 원형 경계 내부 체크
+                if (card_x - self.center)**2 + (card_y - self.center)**2 <= (self.radius - 50)**2:
+                    def make_content_drawer(l, v, u, c):
+                        def drawer(d, x, y, w, h):
+                            self._draw_sensor_value_card(d, x, y, w, h, l, v, u, c)
+                        return drawer
+                    
+                    self._draw_glass_card(
+                        draw, card_x, card_y,
+                        90, 70,
+                        make_content_drawer(label, value, unit, color),
+                        bg_alpha=140
+                    )
+
+    def _draw_weather_effects(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot):
+        """날씨 효과 종합"""
+        hour = datetime.now().hour
+        
+        # 안개/미스트 효과 (PM2.5 기반)
+        if snapshot.pm25 is not None and snapshot.pm25 > 35:
+            fog_intensity = min((snapshot.pm25 - 35) / 100, 0.5)
+            fog_color = (200, 200, 200, int(100 * fog_intensity))
+            
+            # 여러 겹의 안개
+            for i in range(3):
+                y_offset = self.center + (i - 1) * 50
+                for x in range(0, self.diameter, 20):
+                    wave = math.sin(x * 0.02 + self.animation_time + i) * 20
+                    draw.ellipse(
+                        [x - 30, y_offset + wave - 15,
+                         x + 30, y_offset + wave + 15],
+                        fill=fog_color
+                    )
 
     def render(self, snapshot: SensorSnapshot) -> Image.Image:
         """메인 렌더링"""
-        # 애니메이션 시간 업데이트
         self.animation_time = time.time()
+        hour = datetime.now().hour
         
-        # 배경 이미지 생성
-        img = Image.new("RGB", (self.diameter, self.diameter), Colors.BG_TOP)
-        draw = ImageDraw.Draw(img, "RGBA")
+        # 배경 이미지
+        img = Image.new("RGB", (self.diameter, self.diameter), (0, 0, 0))
         
-        # 그라디언트 배경
-        self._draw_gradient_background(draw, img)
+        # 시간대별 하늘 그라디언트
+        self._draw_realistic_sky(None, img, hour)
         
-        # 원형 마스크 적용
+        # 원형 마스크
         mask = Image.new("L", (self.diameter, self.diameter), 0)
         mask_draw = ImageDraw.Draw(mask)
         mask_draw.ellipse((0, 0, self.diameter, self.diameter), fill=255)
         
-        # 검은색 배경에 마스크 적용
+        # 마스크 적용
         background = Image.new("RGB", (self.diameter, self.diameter), (0, 0, 0))
         background.paste(img, mask=mask)
         img = background
         
-        # 새로운 드로우 객체 생성 (RGBA 지원)
+        # RGBA 드로우
         draw = ImageDraw.Draw(img, "RGBA")
         
-        # 데이터 유무에 따른 렌더링
-        if not snapshot.has_payload():
-            self._draw_waiting_state(draw)
-        else:
-            # 센서 링 표시
-            self._draw_sensor_ring(draw, snapshot)
-            
-            # 중앙 디스플레이
-            self._draw_center_display(draw, snapshot)
+        # 배경 요소들
+        self._draw_stars(draw, hour)
+        self._draw_sun_moon(draw, hour, snapshot.temp_c)
+        self._draw_clouds(draw, snapshot.hum, snapshot.pm25)
         
-        # 외곽 원 테두리 (subtle)
-        draw.ellipse(
-            (2, 2, self.diameter - 2, self.diameter - 2),
-            outline=(60, 70, 90, 100), width=1
-        )
+        # 날씨 효과
+        self._draw_rain(draw, snapshot.hum)
+        self._draw_weather_effects(draw, snapshot)
+        
+        # 인터랙티브 요소
+        self._draw_fireflies(draw, snapshot.pir)
+        
+        # 파티클 시스템
+        self.particle_system.update(0.016)  # 60fps 가정
+        self.particle_system.draw(draw, self.center, self.radius)
+        
+        # 정보 패널
+        if snapshot.has_payload():
+            self._draw_info_panel(draw, snapshot)
+        else:
+            # 연결 대기 상태
+            def draw_connecting(d, x, y, w, h):
+                dots = "." * (int(self.animation_time * 2) % 4)
+                d.text((x, y), "연결 중" + dots, font=self.font_medium,
+                      fill=(100, 100, 120), anchor="mm")
+            
+            self._draw_glass_card(draw, self.center, self.center,
+                                 150, 60, draw_connecting, bg_alpha=180)
+        
+        # 외곽 비네팅 효과
+        for i in range(10):
+            alpha = int(5 * i)
+            draw.ellipse(
+                [i, i, self.diameter - i, self.diameter - i],
+                outline=(0, 0, 0, alpha), width=1
+            )
         
         return img
 
@@ -732,16 +938,15 @@ class KafkaSensorStream:
 
     def _run(self) -> None:
         try:
-            print(f"[Kafka] 연결 시도 중... servers: {settings.bootstrap_servers}")
             consumer = KafkaConsumer(
                 enable_auto_commit=True,
                 value_deserializer=lambda v: v.decode(settings.value_encoding, "ignore"),
                 consumer_timeout_ms=1000,
                 **settings.kafka_kwargs,
             )
-            print(f"[Kafka] 소비자 생성 완료")
             consumer.subscribe([settings.sensor_topic])
-            print(f"[Kafka] 토픽 구독 완료: {settings.sensor_topic}")
+            if self.debug:
+                print(f"[Kafka] 토픽 구독: {settings.sensor_topic}")
         except Exception as exc:
             print(f"[Kafka] 소비자 초기화 실패: {exc}")
             return
@@ -750,28 +955,29 @@ class KafkaSensorStream:
             try:
                 records = consumer.poll(timeout_ms=500)
             except Exception as exc:
-                print(f"[Kafka] poll 실패: {exc}")
+                if self.debug:
+                    print(f"[Kafka] poll 실패: {exc}")
                 time.sleep(1.0)
                 continue
+                
             if not records:
                 continue
+                
             for messages in records.values():
                 for message in messages:
-                    raw_value = message.value
                     try:
-                        payload = json.loads(raw_value)
+                        payload = json.loads(message.value)
                     except Exception as exc:
                         if self.debug:
-                            print(f"[Kafka] JSON 파싱 실패: {exc} :: {raw_value!r}")
+                            print(f"[Kafka] JSON 파싱 실패: {exc}")
                         continue
+                        
                     snapshot = _snapshot_from_payload(payload)
-                    if snapshot is None:
-                        if self.debug:
-                            print(f"[Kafka] 지원하지 않는 페이로드: {payload}")
-                        continue
-                    snapshot.raw = payload
-                    snapshot.ingested_at = time.time()
-                    self._publish(snapshot)
+                    if snapshot:
+                        snapshot.raw = payload
+                        snapshot.ingested_at = time.time()
+                        self._publish(snapshot)
+                        
         try:
             consumer.close()
         except Exception:
@@ -779,21 +985,11 @@ class KafkaSensorStream:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="모던한 원형 센서 디스플레이")
+    parser = argparse.ArgumentParser(description="자연 테마 리얼리스틱 센서 디스플레이")
     parser.add_argument("--diameter", type=int, default=settings.diameter_pixels, help="디스플레이 지름(px)")
     parser.add_argument("--font", type=str, default=settings.font_path, help="TTF 폰트 경로")
-    parser.add_argument(
-        "--refresh-hz",
-        type=float,
-        default=settings.display_refresh_hz,
-        help="화면 갱신 주기(Hz)",
-    )
-    parser.add_argument(
-        "--frame-dump",
-        type=str,
-        default=None,
-        help="프레임 이미지를 저장할 디렉터리(테스트용)",
-    )
+    parser.add_argument("--refresh-hz", type=float, default=settings.display_refresh_hz, help="화면 갱신 주기(Hz)")
+    parser.add_argument("--frame-dump", type=str, default=None, help="프레임 이미지 저장 디렉터리")
     parser.add_argument("--debug", action="store_true", help="디버그 로그 출력")
     return parser
 
@@ -807,14 +1003,11 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
-    print(f"[Main] 모던 센서 디스플레이 시작")
-    print(f"[Main] Kafka 설정: {settings.bootstrap_servers} / {settings.sensor_topic}")
-
     refresh_hz = args.refresh_hz if args.refresh_hz > 0 else 1.0
     refresh_period = 1.0 / refresh_hz
 
     dump_dir = Path(args.frame_dump) if args.frame_dump else None
-    display = ModernCircularDisplay(
+    display = NaturalCircularDisplay(
         diameter=args.diameter,
         font_path=args.font,
         dump_dir=dump_dir,
@@ -822,7 +1015,6 @@ def main() -> None:
 
     out_queue: queue.Queue[SensorSnapshot] = queue.Queue(maxsize=16)
     stream = KafkaSensorStream(out_queue, debug=args.debug)
-    print("[Main] Kafka 스트림 시작...")
     stream.start()
 
     latest = SensorSnapshot()
@@ -834,8 +1026,6 @@ def main() -> None:
             try:
                 snapshot = out_queue.get(timeout=timeout if timeout > 0 else 0.01)
                 latest = snapshot
-                if args.debug:
-                    print(f"[Main] 업데이트: device={snapshot.device_id} temp={snapshot.temp_c} hum={snapshot.hum}")
             except queue.Empty:
                 pass
 

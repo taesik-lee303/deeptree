@@ -130,7 +130,7 @@ class UartKafkaProducer:
 
         fields = extract_fields(data)
         payload = {
-            "ts": fields.get("ts"),
+            "ts": fields.get("ts") or time.time(),
             "device_id": fields.get("device_id"),
             "temp_c": fields.get("temp_c"),
             "hum": fields.get("hum"),
