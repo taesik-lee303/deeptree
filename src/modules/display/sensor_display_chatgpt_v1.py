@@ -1,42 +1,27 @@
 # sensor_display.py
 """
-2.1인치 원형(기본 480x480) 디스플레이에 '현실적인 미니멀 자연 테마 v2'로 센서 데이터를 렌더링.
+원형(기본 480x480) 디스플레이 - 현실적 자연 테마 v3
 
-자연 요소(하늘/태양·달 글로우/구름·헤이즈/언덕/잔디 스웨이/물결 리플)를
-센서 값과 시간대에 연동:
-- 시간대: 하늘 그라디언트/태양·달 위치, 색·밝기
-- PM2.5: 구름의 농담과 헤이즈 강도
-- 습도: 물방울/연무 강조
-- PIR/소음: 바람 강도(잔디 스웨이)와 물결 리플
-
-UI는 글래스모피즘 중앙 패널 + 3개 카드(TEMP / PM2.5 / HUM) + 하단 보조 정보(소음/PIR/시간).
-겹침 방지를 위해 세이프존/충돌회피/폰트스케일 재설계.
-
-Kafka 소비/큐 구조, Tkinter 프리뷰 유지.
+핵심 수정
+- 온도 중복 제거: 중앙이 온도면 TEMP 카드는 숨김
+- 이모지 제거: 시스템 폰트 의존성 없이 순수 텍스트 라벨 사용 (TEMP / HUM / PM2.5 / LIVE 등)
+- 레이아웃 안정화: 세이프존 확대, 카드 2장(좌하 PM2.5, 우하 HUM)만 배치, 원 내부 충돌/클리핑 방지
+- 하단 눈금 제거, 푸터 간소화
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import math
-import queue
-import threading
-import time
+import argparse, json, math, queue, threading, time, random, hashlib, sys, os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
-import sys
-import os
-import random
-import hashlib
 
 # Kafka
 try:
     from kafka import KafkaConsumer
-except Exception as exc:  # pragma: no cover
-    KafkaConsumer = None  # type: ignore
+except Exception as exc:
+    KafkaConsumer = None
     _KAFKA_IMPORT_ERROR = exc
 else:
     _KAFKA_IMPORT_ERROR = None
@@ -44,37 +29,29 @@ else:
 # Pillow
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
-except Exception as exc:  # pragma: no cover
-    Image = None  # type: ignore
-    ImageDraw = None  # type: ignore
-    ImageFont = None  # type: ignore
-    ImageFilter = None  # type: ignore
-    ImageOps = None    # type: ignore
+except Exception as exc:
+    Image = ImageDraw = ImageFont = ImageFilter = ImageOps = None  # type: ignore
     _PILLOW_IMPORT_ERROR = exc
 else:
     _PILLOW_IMPORT_ERROR = None
 
-# Tkinter (옵션 미리보기)
+# Tkinter preview (optional)
 try:
     import tkinter as tk
     from tkinter import Label
     from PIL import ImageTk
-except Exception as exc:  # pragma: no cover
-    tk = None  # type: ignore
-    Label = None  # type: ignore
-    ImageTk = None  # type: ignore
+except Exception as exc:
+    tk = Label = ImageTk = None  # type: ignore
     _TKINTER_IMPORT_ERROR = exc
 else:
     _TKINTER_IMPORT_ERROR = None
 
-# 프로젝트 설정
+# project settings
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from networks.kafka.kafka_config import settings
 
 
-# -----------------------------
-# 데이터 스냅샷
-# -----------------------------
+# ---------------- Data ----------------
 @dataclass
 class SensorSnapshot:
     ts: Optional[float] = None
@@ -90,123 +67,73 @@ class SensorSnapshot:
     ingested_at: float = field(default_factory=time.time)
 
     def has_payload(self) -> bool:
-        return any(
-            v is not None
-            for v in (self.temp_c, self.hum, self.noise, self.pir, self.pm1, self.pm25, self.pm10)
-        )
+        return any(v is not None for v in (self.temp_c, self.hum, self.noise, self.pir, self.pm1, self.pm25, self.pm10))
 
 
-# -----------------------------
-# 유틸
-# -----------------------------
 def _pick(d: Dict[str, Any], keys: Iterable[str]) -> Any:
     for k in keys:
         if k in d and d[k] is not None:
             return d[k]
     return None
 
-
-def _to_float(value: Any) -> Optional[float]:
-    if value is None:
+def _to_float(v: Any) -> Optional[float]:
+    if v is None: return None
+    try:
+        return float(str(v).replace(",", "."))
+    except Exception:
         return None
-    if isinstance(value, (int, float)) and not math.isnan(float(value)):
-        return float(value)
-    if isinstance(value, str):
-        s = value.strip()
-        if not s:
-            return None
+
+def _to_int01(v: Any) -> Optional[int]:
+    if v is None: return None
+    if isinstance(v, bool): return 1 if v else 0
+    s = str(v).strip().lower()
+    if s in ("1","true","on","motion","active","triggered"): return 1
+    if s in ("0","false","off","idle","inactive","clear"):   return 0
+    try: return 1 if float(s)>=0.5 else 0
+    except: return None
+
+def _parse_ts(v: Any) -> Optional[float]:
+    if v is None: return None
+    try:
+        x = float(v)
+        return x/1000.0 if x>1e12 else x
+    except:
         try:
-            return float(s)
-        except ValueError:
-            s = s.replace(",", ".")
-            try:
-                return float(s)
-            except ValueError:
-                return None
-    return None
-
-
-def _to_int01(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return 1 if value else 0
-    if isinstance(value, (int, float)):
-        return 1 if float(value) >= 0.5 else 0
-    if isinstance(value, str):
-        s = value.strip().lower()
-        if s in ("1", "true", "on", "motion", "triggered", "active"):
-            return 1
-        if s in ("0", "false", "off", "clear", "idle", "inactive"):
-            return 0
-    return None
-
-
-def _parse_timestamp(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        ts = float(value)
-        if ts > 1e12:  # ms 방어
-            ts = ts / 1000.0
-        return ts
-    if isinstance(value, str):
-        s = value.strip()
-        if not s:
+            return datetime.fromisoformat(str(v).replace("Z","+00:00")).timestamp()
+        except:
             return None
-        try:
-            return _parse_timestamp(float(s))
-        except ValueError:
-            pass
-        try:
-            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        return dt.replace(tzinfo=dt.tzinfo or timezone.utc).timestamp()
-    return None
-
 
 def _extract_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {}
-    direct = {k for k in ("temp_c", "hum", "noise", "pir", "pm1", "pm25", "pm10") if k in payload}
-    result = {"ts": payload.get("ts"), "device_id": payload.get("device_id")}
+    if not isinstance(payload, dict): return {}
+    direct = {k for k in ("temp_c","hum","noise","pir","pm1","pm25","pm10") if k in payload}
+    r = {"ts": payload.get("ts"), "device_id": payload.get("device_id")}
     if direct:
-        for k in ("temp_c", "hum", "noise", "pir", "pm1", "pm25", "pm10"):
-            result[k] = payload.get(k)
-        return result
-
+        for k in ("temp_c","hum","noise","pir","pm1","pm25","pm10"):
+            r[k] = payload.get(k)
+        return r
     base = payload.get("sensors") if isinstance(payload.get("sensors"), dict) else payload
-    if not isinstance(base, dict):
-        base = {}
-
+    base = base if isinstance(base, dict) else {}
     dht = base.get("dht22") if isinstance(base.get("dht22"), dict) else {}
-    ir = base.get("ir") if isinstance(base.get("ir"), dict) else {}
+    ir  = base.get("ir") if isinstance(base.get("ir"), dict) else {}
     snd = base.get("sound") if isinstance(base.get("sound"), dict) else {}
-    pm = base.get("pm") if isinstance(base.get("pm"), dict) else {}
+    pm  = base.get("pm") if isinstance(base.get("pm"), dict) else {}
+    r.update({
+        "temp_c": _pick(dht, ["temp_c","temperature","temp","t"]),
+        "hum":    _pick(dht, ["hum","humidity","h"]),
+        "noise":  _pick(snd, ["noise","noise_raw","level","raw","value"]),
+        "pir":    _pick(ir,  ["pir","motion","value","status"]) or _pick(base,["pir","motion"]),
+        "pm1":    _pick(pm,  ["pm1","pm1_0","pm_1_0"]),
+        "pm25":   _pick(pm,  ["pm25","pm2_5","pm2.5","pm_2_5"]),
+        "pm10":   _pick(pm,  ["pm10","pm_10"]),
+    })
+    return r
 
-    result.update(
-        {
-            "temp_c": _pick(dht, ["temp_c", "temperature", "temp", "t"]),
-            "hum": _pick(dht, ["hum", "humidity", "h"]),
-            "noise": _pick(snd, ["noise_raw", "noise", "value", "raw", "level"]),
-            "pir": _pick(ir, ["pir", "motion", "value", "status"]) or _pick(base, ["pir", "motion"]),
-            "pm1": _pick(pm, ["pm1", "pm1_0", "pm_1_0"]),
-            "pm25": _pick(pm, ["pm25", "pm2_5", "pm2.5", "pm_2_5"]),
-            "pm10": _pick(pm, ["pm10", "pm_10"]),
-        }
-    )
-    return result
-
-
-def _snapshot_from_payload(payload: Dict[str, Any]) -> SensorSnapshot | None:
-    f = _extract_fields(payload)
-    if not f:
-        return None
-    ts = _parse_timestamp(f.get("ts"))
-    snap = SensorSnapshot(
-        ts=ts,
-        device_id=f.get("device_id") or payload.get("device"),
+def _snapshot_from_payload(p: Dict[str, Any]) -> Optional[SensorSnapshot]:
+    f = _extract_fields(p)
+    if not f: return None
+    return SensorSnapshot(
+        ts=_parse_ts(f.get("ts")),
+        device_id=f.get("device_id") or p.get("device"),
         temp_c=_to_float(f.get("temp_c")),
         hum=_to_float(f.get("hum")),
         noise=_to_float(f.get("noise")),
@@ -215,729 +142,432 @@ def _snapshot_from_payload(payload: Dict[str, Any]) -> SensorSnapshot | None:
         pm25=_to_float(f.get("pm25")),
         pm10=_to_float(f.get("pm10")),
     )
-    return snap
 
 
-# -----------------------------
-# Tkinter 드라이버 (옵션)
-# -----------------------------
+# -------------- Tk driver --------------
 class TkinterDisplayDriver:
     def __init__(self, diameter: int):
         if tk is None or ImageTk is None:
             raise RuntimeError(f"Tkinter import 실패: {_TKINTER_IMPORT_ERROR}")
-        self.diameter = diameter
         self.root = tk.Tk()
         self.root.title("Sensor Display")
-        self.root.geometry(f"{diameter + 20}x{diameter + 50}")
+        self.root.geometry(f"{diameter+20}x{diameter+50}")
         self.root.configure(bg="black")
-
-        self.label = Label(self.root, bg="black")
-        self.label.pack(pady=10)
-
-        self.root.lift()
-        self.root.attributes("-topmost", True)
+        self.label = Label(self.root, bg="black"); self.label.pack(pady=10)
+        self.root.lift(); self.root.attributes("-topmost", True)
         self.root.after_idle(lambda: self.root.attributes("-topmost", False))
-
-    def display(self, image: Image.Image):
+    def display(self, image):
         photo = ImageTk.PhotoImage(image)
-        self.label.configure(image=photo)
-        self.label.image = photo
+        self.label.configure(image=photo); self.label.image = photo
         self.root.update()
 
 
-# -----------------------------
-# 배경 캐시(성능) & 랜덤 시드
-# -----------------------------
+# -------------- Background cache --------------
 class BackgroundCache:
     def __init__(self):
-        self.image: Optional[Image.Image] = None
-        self.key: Optional[tuple] = None  # (phase, pm_tier, size)
-
-    def get(self, key: tuple[int, int, int]) -> Optional[Image.Image]:
-        if self.key == key and self.image is not None:
-            return self.image.copy()
-        return None
-
-    def set(self, key: tuple[int, int, int], img: Image.Image) -> None:
-        self.key = key
-        self.image = img.copy()
-
+        self.image = None; self.key = None
+    def get(self, key): return self.image.copy() if self.key==key and self.image is not None else None
+    def set(self, key, img): self.key = key; self.image = img.copy()
 
 def _hash_seed(s: str) -> int:
-    h = hashlib.sha256(s.encode("utf-8")).hexdigest()
-    return int(h[:8], 16)
+    return int(hashlib.sha256(s.encode()).hexdigest()[:8], 16)
 
 
-# -----------------------------
-# 미니멀 자연 테마 렌더러 (v2)
-# -----------------------------
+# -------------- Renderer --------------
 class CircularNaturalDisplay:
-    # 팔레트
-    SKY_DAY = ((160, 205, 255), (220, 240, 255))      # 상단→하단
-    SKY_DAWN = ((255, 170, 120), (255, 220, 200))
-    SKY_DUSK = ((130, 160, 220), (240, 210, 200))
-    SKY_NIGHT = ((25, 35, 60), (60, 75, 110))
-    RING = (210, 220, 235)
-    GRASS_NEAR = (70, 150, 80)
-    GRASS_FAR = (110, 170, 120)
-    HILL_1 = (90, 150, 110)
-    HILL_2 = (120, 180, 140)
-    HILL_3 = (150, 200, 160)
-    TEXT_MAIN = (30, 40, 50)
-    TEXT_SUB = (105, 115, 125)
-    TEMP_COLOR = (255, 137, 115)
-    HUM_COLOR = (110, 175, 245)
-    PM_COLOR = (165, 140, 245)
-    LIVE = (62, 201, 85)
-    RECENT = (255, 187, 70)
-    OLD = (235, 95, 85)
-    GLASS = (255, 255, 255, 210)
-    CARD_BORDER = (210, 220, 235)
+    # palette
+    SKY_DAY  = ((160,205,255),(220,240,255))
+    SKY_DAWN = ((255,170,120),(255,220,200))
+    SKY_DUSK = ((130,160,220),(240,210,200))
+    SKY_NIGHT= ((25,35,60),(60,75,110))
+    RING=(210,220,235)
+    GRASS_NEAR=(70,150,80); GRASS_FAR=(110,170,120)
+    HILL_1=(90,150,110); HILL_2=(120,180,140); HILL_3=(150,200,160)
+    TEXT_MAIN=(30,40,50); TEXT_SUB=(105,115,125)
+    TEMP_COLOR=(255,137,115); HUM_COLOR=(110,175,245); PM_COLOR=(165,140,245)
+    LIVE=(62,201,85); RECENT=(255,187,70); OLD=(235,95,85)
+    GLASS=(255,255,255,210); CARD_BORDER=(210,220,235)
 
-    def __init__(
-        self,
-        *,
-        diameter: int,
-        font_path: str | None = None,
-        dump_dir: Path | None = None,
-        driver: Any | None = None,
-        use_tkinter: bool = True,
-    ) -> None:
-        if Image is None or ImageDraw is None or ImageFont is None:
-            raise RuntimeError(f"Pillow import 실패: {_PILLOW_IMPORT_ERROR}")
-        self.diameter = diameter
-        self.center = diameter / 2.0
-
-        # 드라이버
+    def __init__(self, *, diameter:int, font_path:str|None=None, dump_dir:Path|None=None, driver=None, use_tkinter=True):
+        if Image is None: raise RuntimeError(f"Pillow import 실패: {_PILLOW_IMPORT_ERROR}")
+        self.diameter = diameter; self.center = diameter/2
+        self.driver = None
         if driver is None and use_tkinter:
-            try:
-                self.driver = TkinterDisplayDriver(diameter)
-                print("[Display] Tkinter 디스플레이 드라이버 초기화 완료")
-            except RuntimeError as e:
-                print(f"[Display] Tkinter 드라이버 실패: {e}")
-                self.driver = None
-        else:
-            self.driver = driver
-
+            try: self.driver = TkinterDisplayDriver(diameter)
+            except RuntimeError as e: print(f"[Display] Tk 실패: {e}")
+        else: self.driver = driver
         self.dump_dir = Path(dump_dir) if dump_dir else None
-        if self.dump_dir:
-            self.dump_dir.mkdir(parents=True, exist_ok=True)
-        self.frame_index = 0
+        if self.dump_dir: self.dump_dir.mkdir(parents=True, exist_ok=True)
+        self.frame_index=0
 
-        # 레이아웃 세이프존 & 스케일
-        self.SAFE_INSET = max(18, int(self.diameter * 0.04))  # 링과 카드가 닿지 않게
-        self.CARD_W = int(self.diameter * 0.34)               # 480기준 ~163px
-        self.CARD_H = int(self.diameter * 0.20)               # 480기준 ~96px
-        self.CENTER_W = int(self.diameter * 0.58)
-        self.CENTER_H = int(self.diameter * 0.24)
+        # Safe zones & sizes
+        self.SAFE_INSET = max(22, int(self.diameter*0.05))   # 더 넉넉하게
+        self.CARD_W = int(self.diameter*0.34)
+        self.CARD_H = int(self.diameter*0.20)
+        self.CENTER_W = int(self.diameter*0.58)
+        self.CENTER_H = int(self.diameter*0.24)
 
-        # 폰트(조금 축소해 겹침 방지)
-        self.font_xl = self._load_font(font_path, 96)
-        self.font_lg = self._load_font(font_path, 56)
-        self.font_md = self._load_font(font_path, 34)
-        self.font_sm = self._load_font(font_path, 24)
-        self.font_xs = self._load_font(font_path, 18)
+        # fonts (no emoji dependency)
+        self.font_xl=self._font(font_path,96); self.font_lg=self._font(font_path,56)
+        self.font_md=self._font(font_path,34); self.font_sm=self._font(font_path,24); self.font_xs=self._font(font_path,18)
 
-        # 배경 캐시
-        self.bg_cache = BackgroundCache()
+        self.bg_cache=BackgroundCache()
+        self.scene_seed=_hash_seed(os.uname().nodename if hasattr(os,"uname") else "deepcare"); random.seed(self.scene_seed)
+        self._ripple_start=None
 
-        # 장면 랜덤 고정(디바이스별 다른 풍경)
-        self.scene_seed = _hash_seed(os.uname().nodename if hasattr(os, "uname") else "deepcare")
-        random.seed(self.scene_seed)
-
-        # 물결 리플 상태
-        self._ripple_start: Optional[float] = None
-
-    # ---- 폰트/텍스트 ----
-    def _load_font(self, font_path: str | None, size: int) -> ImageFont.ImageFont:
-        candidates = []
-        if font_path:
-            candidates.append(Path(font_path))
-        candidates.extend(
-            Path(p)
-            for p in (
-                "C:/Windows/Fonts/malgun.ttf",
-                "C:/Windows/Fonts/seguiemj.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            )
-        )
-        for c in candidates:
-            if c.is_file():
-                try:
-                    return ImageFont.truetype(str(c), size)
-                except OSError:
-                    continue
+    def _font(self, path,size):
+        from pathlib import Path
+        cands=[]
+        if path: cands.append(Path(path))
+        cands += [Path(p) for p in (
+            "C:/Windows/Fonts/malgun.ttf","C:/Windows/Fonts/seguiemj.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        )]
+        for p in cands:
+            if p.is_file():
+                try: return ImageFont.truetype(str(p), size)
+                except: pass
         return ImageFont.load_default()
 
-    @staticmethod
-    def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> tuple[int, int]:
-        if hasattr(draw, "textbbox"):
-            l, t, r, b = draw.textbbox((0, 0), text, font=font)
-            return int(r - l), int(b - t)
-        return draw.textsize(text, font=font)
+    def _text_size(self, draw, text, font):
+        if hasattr(draw,"textbbox"):
+            l,t,r,b = draw.textbbox((0,0), text, font=font); return r-l, b-t
+        return draw.textsize(text,font=font)
 
-    def _draw_text(self, draw, text, xy, font, fill, align="center"):
-        w, h = self._text_size(draw, text, font)
-        if align == "center":
-            pos = (xy[0] - w / 2.0, xy[1] - h / 2.0)
-        elif align == "right":
-            pos = (xy[0] - w, xy[1] - h / 2.0)
-        else:
-            pos = (xy[0], xy[1] - h / 2.0)
+    def _text(self, draw, text, xy, font, fill, align="center"):
+        w,h = self._text_size(draw,text,font)
+        if align=="center": pos=(xy[0]-w/2, xy[1]-h/2)
+        elif align=="right": pos=(xy[0]-w, xy[1]-h/2)
+        else: pos=(xy[0], xy[1]-h/2)
         draw.text(pos, text, font=font, fill=fill)
 
-    # ---- 시간대/페이즈 ----
-    def _phase_from_time(self, ts: Optional[float]) -> int:
-        # 0=night, 1=dawn, 2=day, 3=dusk
-        if ts is None:
-            hour = datetime.now().hour
-        else:
-            hour = datetime.fromtimestamp(ts).hour
-        if 22 <= hour or hour < 6:
-            return 0
-        if 6 <= hour < 8:
-            return 1
-        if 8 <= hour < 18:
-            return 2
+    def _phase(self, ts):
+        hour = datetime.now().hour if ts is None else datetime.fromtimestamp(ts).hour
+        if 22<=hour or hour<6: return 0
+        if 6<=hour<8: return 1
+        if 8<=hour<18: return 2
         return 3
 
-    def _sky_colors(self, phase: int):
-        return {
-            0: self.SKY_NIGHT,
-            1: self.SKY_DAWN,
-            2: self.SKY_DAY,
-            3: self.SKY_DUSK,
-        }[phase]
+    def _sky_colors(self, ph): return {0:self.SKY_NIGHT,1:self.SKY_DAWN,2:self.SKY_DAY,3:self.SKY_DUSK}[ph]
 
-    # ---- 그림자/글로우/라운드 ----
-    def _soft_glow(self, base: Image.Image, x: float, y: float, r: float, color: tuple[int, int, int], alpha=200, blur=16):
-        layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer)
-        ld.ellipse((x - r, y - r, x + r, y + r), fill=color + (alpha,))
-        layer = layer.filter(ImageFilter.GaussianBlur(blur))
-        base.alpha_composite(layer)
+    def _soft_glow(self, base,x,y,r,color,alpha=200,blur=16):
+        layer=Image.new("RGBA", base.size,(0,0,0,0))
+        ImageDraw.Draw(layer).ellipse((x-r,y-r,x+r,y+r), fill=color+(alpha,))
+        base.alpha_composite(layer.filter(ImageFilter.GaussianBlur(blur)))
 
-    def _rounded_rect(
-        self,
-        base: Image.Image,
-        rect: tuple[int, int, int, int],
-        radius: int,
-        fill: tuple[int, int, int, int],
-        outline: Optional[tuple[int, int, int]] = None,
-        width: int = 1,
-        shadow: bool = True,
-    ):
-        x0, y0, x1, y1 = rect
-        w = x1 - x0
-        h = y1 - y0
-        card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        cd = ImageDraw.Draw(card)
-        cd.rounded_rectangle((0, 0, w, h), radius=radius, fill=fill, outline=outline, width=width)
+    def _rounded_rect(self, base, rect, radius, fill, outline=None, width=1, shadow=True):
+        x0,y0,x1,y1=rect; w=x1-x0; h=y1-y0
+        card=Image.new("RGBA",(w,h),(0,0,0,0)); d=ImageDraw.Draw(card)
+        d.rounded_rectangle((0,0,w,h), radius=radius, fill=fill, outline=outline, width=width)
         if shadow:
-            shadow_layer = Image.new("RGBA", (w + 10, h + 10), (0, 0, 0, 0))
-            sd = ImageDraw.Draw(shadow_layer)
-            sd.rounded_rectangle((5, 5, w + 5, h + 5), radius=radius + 2, fill=(0, 0, 0, 60))
-            shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(3))
-            base.alpha_composite(shadow_layer, (x0 - 5, y0 - 5))
-        base.alpha_composite(card, (x0, y0))
+            sh=Image.new("RGBA",(w+10,h+10),(0,0,0,0)); sd=ImageDraw.Draw(sh)
+            sd.rounded_rectangle((5,5,w+5,h+5), radius=radius+2, fill=(0,0,0,60))
+            base.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3)), (x0-5,y0-5))
+        base.alpha_composite(card,(x0,y0))
 
-    def _ring(self, draw: ImageDraw.ImageDraw, center: tuple[float, float], r: float, width: int, color: tuple[int, int, int]):
-        x, y = center
-        bbox = (x - r, y - r, x + r, y + r)
-        draw.ellipse(bbox, outline=color, width=width)
+    def _ring(self, draw, center, r, width, color):
+        x,y=center; draw.ellipse((x-r,y-r,x+r,y+r), outline=color, width=width)
 
-    # ---- 자연 요소: 하늘/태양·달/구름/헤이즈/언덕/잔디/물결/이슬 ----
-    def _draw_sky(self, phase: int) -> Image.Image:
-        img = Image.new("RGBA", (self.diameter, self.diameter), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        top, bottom = self._sky_colors(phase)
+    # ---- natural layers ----
+    def _sky(self, ph):
+        img=Image.new("RGBA",(self.diameter,self.diameter),(0,0,0,0)); d=ImageDraw.Draw(img)
+        top,bot=self._sky_colors(ph)
         for y in range(self.diameter):
-            t = y / max(1, self.diameter - 1)
-            r = int(top[0] * (1 - t) + bottom[0] * t)
-            g = int(top[1] * (1 - t) + bottom[1] * t)
-            b = int(top[2] * (1 - t) + bottom[2] * t)
-            d.line([(0, y), (self.diameter, y)], fill=(r, g, b, 255))
+            t=y/max(1,self.diameter-1)
+            clr=(int(top[0]*(1-t)+bot[0]*t), int(top[1]*(1-t)+bot[1]*t), int(top[2]*(1-t)+bot[2]*t), 255)
+            d.line([(0,y),(self.diameter,y)], fill=clr)
         return img
 
-    def _draw_sun_moon(self, canvas: Image.Image, phase: int, temp_c: Optional[float], ts: Optional[float]):
-        if ts is None:
-            hour = datetime.now().hour + datetime.now().minute / 60.0
+    def _sun_moon(self, canvas, ph, temp_c, ts):
+        hour = (datetime.now() if ts is None else datetime.fromtimestamp(ts)).hour
+        minute = (datetime.now() if ts is None else datetime.fromtimestamp(ts)).minute
+        h = hour + minute/60.0
+        t=(h-6)/12.0; t=max(0,min(1,t))
+        x=int(self.diameter*(0.15+0.7*t)); y=int(self.diameter*(0.22-0.12*math.cos(t*math.pi)))
+        if ph==0:
+            self._soft_glow(canvas,x,y,22,(200,220,255),alpha=140,blur=20)
+            ImageDraw.Draw(canvas).ellipse((x-12,y-12,x+12,y+12), fill=(230,240,255,240))
         else:
-            dt = datetime.fromtimestamp(ts)
-            hour = dt.hour + dt.minute / 60.0
+            tr=0.0 if temp_c is None else max(0.0,min(1.0,temp_c/40.0))
+            r=14+10*tr; col=(255, int(220-80*tr), int(140-90*tr))
+            self._soft_glow(canvas,x,y,r+10,col,alpha=180,blur=18)
+            ImageDraw.Draw(canvas).ellipse((x-r,y-r,x+r,y+r), fill=col+(230,))
 
-        t = (hour - 6) / 12.0  # 6h 기준
-        t = max(0.0, min(1.0, t))
-        x = int(self.diameter * (0.15 + 0.7 * t))
-        y = int(self.diameter * (0.22 - 0.12 * math.cos(t * math.pi)))
+    def _cloud_color(self, pm25):
+        if pm25 is None: return (255,255,255,210)
+        inten=min(max(pm25/150.0,0.0),1.0)
+        base=255-int(120*inten); alpha=max(100,210-int(80*inten))
+        return (base,base,base,alpha)
 
-        if phase == 0:  # night -> 달
-            self._soft_glow(canvas, x, y, 22, (200, 220, 255), alpha=140, blur=20)
-            ld = ImageDraw.Draw(canvas)
-            ld.ellipse((x - 12, y - 12, x + 12, y + 12), fill=(230, 240, 255, 240))
-        else:  # sun
-            tr = 0.0 if temp_c is None else max(0.0, min(1.0, temp_c / 40.0))
-            radius = 14 + 10 * tr
-            col = (255, int(220 - 80 * tr), int(140 - 90 * tr))
-            self._soft_glow(canvas, x, y, radius + 10, col, alpha=180, blur=18)
-            ld = ImageDraw.Draw(canvas)
-            ld.ellipse((x - radius, y - radius, x + radius, y + radius), fill=col + (230,))
-
-    def _cloud_color(self, pm25: Optional[float]) -> tuple[int, int, int, int]:
-        if pm25 is None:
-            return (255, 255, 255, 210)
-        intensity = min(max(pm25 / 150.0, 0.0), 1.0)
-        base = 255 - int(120 * intensity)
-        alpha = 210 - int(80 * intensity)
-        return (base, base, base, max(100, alpha))
-
-    def _draw_clouds(self, canvas: Image.Image, pm25: Optional[float], tsec: float):
-        # 구름은 상단 40% 영역에만, 크기/불투명도 줄임
-        w, h = self.diameter, self.diameter
-        col = self._cloud_color(pm25)
-        col = (col[0], col[1], col[2], max(80, col[3] - 70))
-
-        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(layer)
+    def _clouds(self, canvas, pm25, tsec):
+        w,h=self.diameter,self.diameter
+        col=self._cloud_color(pm25); col=(col[0],col[1],col[2], max(80,col[3]-70))
+        layer=Image.new("RGBA",(w,h),(0,0,0,0)); d=ImageDraw.Draw(layer)
         random.seed(self.scene_seed)
+        for i in range(3):
+            by=int(h*(0.16+0.08*i)); size=int(28+7*i); speed=5+2*i
+            bx=int((tsec*speed+80*i)%(w+140))-70
+            for cx,cy,s in [(bx-size//2,by,size),(bx,by-size//6,size+6),(bx+size//2,by+size//12,size-5)]:
+                d.ellipse((cx-s,cy-s,cx+s,cy+s), fill=col)
+        canvas.alpha_composite(layer.filter(ImageFilter.GaussianBlur(1.0)))
 
-        rows = 3
-        for i in range(rows):
-            base_y = int(h * (0.16 + 0.08 * i))
-            size = int(28 + i * 7)
-            speed = 5 + i * 2
-            base_x = int((tsec * speed + 80 * i) % (w + 140)) - 70
-            parts = [
-                (base_x - size//2, base_y, size),
-                (base_x, base_y - size//6, size + 6),
-                (base_x + size//2, base_y + size//12, size - 5),
-            ]
-            for cx, cy, s in parts:
-                d.ellipse((cx - s, cy - s, cx + s, cy + s), fill=col)
+    def _haze(self, canvas, pm25, hum):
+        pm=0.0 if pm25 is None else min(pm25,150.0)/150.0
+        hm=0.0 if hum is None else min(max(hum-60.0,0.0)/40.0,1.0)
+        alpha=int(30+90*max(pm,hm))
+        canvas.alpha_composite(Image.new("RGBA",canvas.size,(220,225,230,alpha)))
 
-        layer = layer.filter(ImageFilter.GaussianBlur(1.0))
-        canvas.alpha_composite(layer)
+    def _hills(self, canvas):
+        w,h=self.diameter,self.diameter; yb=int(h*0.72)
+        def layer(off,amp,step,col,blur=0):
+            lay=Image.new("RGBA",(w,h),(0,0,0,0)); d=ImageDraw.Draw(lay); pts=[]
+            for x in range(0,w+step,step):
+                y=yb+int(math.sin((x+off)*0.012)*amp)+int(math.sin((x+2*off)*0.004)*amp*0.6)
+                pts.append((x,y))
+            pts=[(0,h),(0,pts[0][1])]+pts+[(w,pts[-1][1]),(w,h)]
+            d.polygon(pts, fill=col+(255,))
+            if blur: lay=lay.filter(ImageFilter.GaussianBlur(blur))
+            canvas.alpha_composite(lay)
+        layer(30,8,8,self.HILL_3,2); layer(0,12,6,self.HILL_2,1); layer(-20,18,5,self.HILL_1,0)
 
-    def _draw_haze(self, canvas: Image.Image, pm25: Optional[float], hum: Optional[float]):
-        pm = 0.0 if pm25 is None else min(pm25, 150.0) / 150.0
-        hm = 0.0 if hum is None else min(max(hum - 60.0, 0.0) / 40.0, 1.0)
-        alpha = int(30 + 90 * max(pm, hm))
-        haze = Image.new("RGBA", canvas.size, (220, 225, 230, alpha))
-        canvas.alpha_composite(haze)
+    def _grass(self, canvas, tsec, wind):
+        w,h=self.diameter,self.diameter; ys=int(h*0.78); d=ImageDraw.Draw(canvas)
+        for y in range(ys,h):
+            t=(y-ys)/max(1,(h-ys))
+            r=int(self.GRASS_FAR[0]*(1-t)+self.GRASS_NEAR[0]*t)
+            g=int(self.GRASS_FAR[1]*(1-t)+self.GRASS_NEAR[1]*t)
+            b=int(self.GRASS_FAR[2]*(1-t)+self.GRASS_NEAR[2]*t)
+            rad=math.sqrt(max(self.center**2 - (y-self.center)**2, 0))
+            x0=int(self.center-rad); x1=int(self.center+rad)
+            d.line([(x0,y),(x1,y)], fill=(r,g,b,255))
+        for i in range(42):
+            bx=int(self.center - self.diameter*0.35 + (i/41)*self.diameter*0.70)
+            by=int(h*0.90 + (i%5) - 2); ht=18 + (i%9)
+            sway=math.sin(tsec*(1.4+0.1*i)+i*0.35)*(1.0+wind*1.8)
+            tx=bx+sway; ty=by-ht
+            col=(60+(i%3)*10,160+(i%4)*10,70+(i%5)*6)
+            d.line([(bx,by),(tx,ty)], fill=col+(255,), width=2)
 
-    def _draw_hills(self, canvas: Image.Image):
-        w, h = self.diameter, self.diameter
-        y_base = int(h * 0.72)
+    def _ripple(self, canvas, tsec, trig):
+        if trig and self._ripple_start is None: self._ripple_start=tsec
+        if self._ripple_start is None: return
+        el=tsec-self._ripple_start
+        if el>2.5: self._ripple_start=None; return
+        cx,cy=int(self.center), int(self.diameter*0.82)
+        lay=Image.new("RGBA",canvas.size,(0,0,0,0)); d=ImageDraw.Draw(lay)
+        for i in range(5):
+            r=int(8+el*90+i*10); a=max(0,120-int(el*60+i*18))
+            d.ellipse((cx-r, cy-10-r//6, cx+r, cy+r//6), outline=(200,220,255,a), width=1)
+        canvas.alpha_composite(lay.filter(ImageFilter.GaussianBlur(0.6)))
 
-        def hill_layer(offset: float, amp: float, step: int, color: tuple[int, int, int], blur=0):
-            layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            d = ImageDraw.Draw(layer)
-            points = []
-            for x in range(0, w + step, step):
-                y = y_base + int(math.sin((x + offset) * 0.012) * amp) + int(math.sin((x + 2*offset) * 0.004) * amp * 0.6)
-                points.append((x, y))
-            points = [(0, h), (0, points[0][1])] + points + [(w, points[-1][1]), (w, h)]
-            d.polygon(points, fill=color + (255,))
-            if blur:
-                layer = layer.filter(ImageFilter.GaussianBlur(blur))
-            canvas.alpha_composite(layer)
+    def _dew(self, canvas, hum):
+        if hum is None or hum<82: return
+        lay=Image.new("RGBA",canvas.size,(0,0,0,0)); d=ImageDraw.Draw(lay)
+        for x,y in [(self.center-90, self.diameter*0.32),(self.center+110, self.diameter*0.28)]:
+            d.ellipse((x-6,y-10,x+6,y+6), fill=(180,210,255,110))
+            d.ellipse((x-2,y-6,x+1,y-3), fill=(255,255,255,160))
+        canvas.alpha_composite(lay.filter(ImageFilter.GaussianBlur(0.5)))
 
-        hill_layer(30, 8, 8, self.HILL_3, blur=2)
-        hill_layer(0, 12, 6, self.HILL_2, blur=1)
-        hill_layer(-20, 18, 5, self.HILL_1, blur=0)
+    # ---- UI ----
+    def _center_panel(self, draw, base, snap:SensorSnapshot):
+        cx=self.center; cy=self.center*1.02
+        rect=(int(cx-self.CENTER_W/2), int(cy-self.CENTER_H/2), int(cx+self.CENTER_W/2), int(cy+self.CENTER_H/2))
+        self._rounded_rect(base, rect, 26, self.GLASS, outline=self.CARD_BORDER, width=2, shadow=True)
+        self._text(draw, snap.device_id or "Device", (cx, rect[1]+18), self.font_sm, self.TEXT_SUB)
+        if snap.temp_c is not None: main=f"{snap.temp_c:.1f}°C"; col=self.TEMP_COLOR
+        elif snap.hum is not None:  main=f"{snap.hum:.0f}%";   col=self.HUM_COLOR
+        else: main="---"; col=self.TEXT_MAIN
+        self._text(draw, main, (cx, cy+2), self.font_xl, col)
+        age=time.time()-snap.ingested_at
+        status, col = ("LIVE", self.LIVE) if age<5 else ( "RECENT", self.RECENT) if age<30 else ("OLD", self.OLD)
+        self._text(draw, f"{status}", (cx, rect[3]-18), self.font_xs, col)
 
-    def _draw_grass(self, canvas: Image.Image, tsec: float, wind_strength: float):
-        w, h = self.diameter, self.diameter
-        y_start = int(h * 0.78)
-        d = ImageDraw.Draw(canvas)
+    def _rect_within_circle(self, rect):
+        # 모든 모서리가 원 내부로 들어오도록 확인
+        x0,y0,x1,y1 = rect; cx=self.center; r=self.center - max(2, int(self.diameter*0.004)) - self.SAFE_INSET
+        for x,y in [(x0,y0),(x0,y1),(x1,y0),(x1,y1)]:
+            if (x-cx)**2 + (y-cx)**2 > r**2:  # y uses cx intentionally? bug: should use cy = center
+                return False
+        return True
 
-        for y in range(y_start, h):
-            t = (y - y_start) / max(1, (h - y_start))
-            r = int(self.GRASS_FAR[0] * (1 - t) + self.GRASS_NEAR[0] * t)
-            g = int(self.GRASS_FAR[1] * (1 - t) + self.GRASS_NEAR[1] * t)
-            b = int(self.GRASS_FAR[2] * (1 - t) + self.GRASS_NEAR[2] * t)
-            radius_at_y = math.sqrt(max(self.center ** 2 - (y - self.center) ** 2, 0))
-            x0 = int(self.center - radius_at_y)
-            x1 = int(self.center + radius_at_y)
-            d.line([(x0, y), (x1, y)], fill=(r, g, b, 255))
+    def _sensor_cards(self, draw, base, snap:SensorSnapshot):
+        # 중앙이 온도면 TEMP 카드는 제거 → PM2.5, HUM 두 장만
+        items=[]
+        items.append(("PM2.5", snap.pm25, "µg/m³", self.PM_COLOR))
+        items.append(("HUM",   snap.hum,  "%",     self.HUM_COLOR))
 
-        blades = 42
-        for i in range(blades):
-            base_x = int(self.center - self.diameter * 0.35 + (i / (blades - 1)) * self.diameter * 0.70)
-            base_y = int(h * 0.90 + (i % 5) - 2)
-            height = 18 + (i % 9)
-            sway = math.sin(tsec * (1.4 + 0.1 * i) + i * 0.35) * (1.0 + wind_strength * 1.8)
-            top_x = base_x + sway
-            top_y = base_y - height
-            col = (60 + (i % 3) * 10, 160 + (i % 4) * 10, 70 + (i % 5) * 6)
-            d.line([(base_x, base_y), (top_x, top_y)], fill=col + (255,), width=2)
+        # 목표 각도: 좌하(210°), 우하(330°) — 상단은 비움(겹침 방지)
+        target_angles=[210,330]
+        radius = self.diameter * 0.365
+        card_w,card_h=self.CARD_W,self.CARD_H
 
-    def _draw_ripple(self, canvas: Image.Image, tsec: float, trigger: bool):
-        now = tsec
-        if trigger and self._ripple_start is None:
-            self._ripple_start = now
-        if self._ripple_start is None:
-            return
-        elapsed = now - self._ripple_start
-        if elapsed > 2.5:
-            self._ripple_start = None
-            return
+        cx=self.center; cy=self.center*1.02
+        center_rect=(int(cx-self.CENTER_W/2), int(cy-self.CENTER_H/2), int(cx+self.CENTER_W/2), int(cy+self.CENTER_H/2))
 
-        cx, cy = int(self.center), int(self.diameter * 0.82)
-        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        d = ImageDraw.Draw(layer)
-        rings = 5
-        for i in range(rings):
-            r = int(8 + (elapsed * 90) + i * 10)
-            alpha = max(0, 120 - int((elapsed * 60) + i * 18))
-            d.ellipse((cx - r, cy - 10 - r//6, cx + r, cy + r//6), outline=(200, 220, 255, alpha), width=1)
-        layer = layer.filter(ImageFilter.GaussianBlur(0.6))
-        canvas.alpha_composite(layer)
+        def collide(a,b):
+            return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
 
-    def _draw_dew(self, canvas: Image.Image, hum: Optional[float]):
-        if hum is None or hum < 82:
-            return
-        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        d = ImageDraw.Draw(layer)
-        drops = [(self.center - 90, self.diameter * 0.32), (self.center + 110, self.diameter * 0.28)]
-        for (x, y) in drops:
-            d.ellipse((x - 6, y - 10, x + 6, y + 6), fill=(180, 210, 255, 110))
-            d.ellipse((x - 2, y - 6, x + 1, y - 3), fill=(255, 255, 255, 160))
-        layer = layer.filter(ImageFilter.GaussianBlur(0.5))
-        canvas.alpha_composite(layer)
+        for i,(label,val,unit,color) in enumerate(items):
+            ang=math.radians(target_angles[i])
+            x=self.center + radius*math.cos(ang); y=self.center + radius*math.sin(ang)
 
-    # ---- UI: 중앙 패널/카드/푸터 ----
-    def _draw_center_panel(self, draw: ImageDraw.ImageDraw, base: Image.Image, snapshot: SensorSnapshot):
-        cx = self.center
-        cy = self.center * 1.02  # 살짝 아래로
-        card_w, card_h = self.CENTER_W, self.CENTER_H
-        rect = (int(cx - card_w / 2), int(cy - card_h / 2), int(cx + card_w / 2), int(cy + card_h / 2))
-        self._rounded_rect(base, rect, radius=26, fill=self.GLASS, outline=self.CARD_BORDER, width=2, shadow=True)
+            # 세이프 인셋 적용
+            x=max(self.SAFE_INSET+card_w/2, min(self.diameter-self.SAFE_INSET-card_w/2, x))
+            y=max(self.SAFE_INSET+card_h/2, min(self.diameter-self.SAFE_INSET-card_h/2, y))
+            rect=(int(x-card_w/2), int(y-card_h/2), int(x+card_w/2), int(y+card_h/2))
 
-        device = snapshot.device_id or "Device"
-        self._draw_text(draw, device, (cx, rect[1] + 18), self.font_sm, self.TEXT_SUB)
+            # 중앙 패널 충돌시 원 중심 반대 방향으로 조금 이동
+            step=0
+            while collide(rect, center_rect) and step<4:
+                x += 10*math.cos(ang); y += 10*math.sin(ang)
+                rect=(int(x-card_w/2), int(y-card_h/2), int(x+card_w/2), int(y+card_h/2)); step+=1
 
-        if snapshot.temp_c is not None:
-            main_txt = f"{snapshot.temp_c:.1f}°C"; color = self.TEMP_COLOR
-        elif snapshot.hum is not None:
-            main_txt = f"{snapshot.hum:.0f}%";    color = self.HUM_COLOR
-        else:
-            main_txt, color = "---", self.TEXT_MAIN
+            # 원 내부 보정: 모서리가 밖으로 나가면 반경 축소
+            cstep=0
+            while not self._rect_within_circle(rect) and cstep<6:
+                x = (x+self.center)/2; y=(y+self.center)/2  # 중심 쪽으로 당김
+                rect=(int(x-card_w/2), int(y-card_h/2), int(x+card_w/2), int(y+card_h/2)); cstep+=1
 
-        self._draw_text(draw, main_txt, (cx, cy + 2), self.font_xl, color)
-
-        age = time.time() - snapshot.ingested_at
-        if   age < 5:  status, s_col = "● LIVE",   self.LIVE
-        elif age < 30: status, s_col = "● RECENT", self.RECENT
-        else:          status, s_col = "● OLD",    self.OLD
-        self._draw_text(draw, status, (cx, rect[3] - 18), self.font_xs, s_col)
-
-    def _draw_sensor_cards(self, draw: ImageDraw.ImageDraw, base: Image.Image, snapshot: SensorSnapshot):
-        items = [
-            ("🌡️ TEMP", snapshot.temp_c, "°C",     self.TEMP_COLOR),  # 상단
-            ("🌫️ PM2.5", snapshot.pm25, "µg/m³",  self.PM_COLOR),    # 좌하
-            ("💧 HUM",  snapshot.hum,    "%",      self.HUM_COLOR),   # 우하
-        ]
-        card_w, card_h = self.CARD_W, self.CARD_H
-        target_angles = [90, 210, 330]        # 상/좌하/우하
-        radius = self.diameter * 0.37
-
-        cx = self.center
-        cy = self.center * 1.02
-        center_rect = (
-            int(cx - self.CENTER_W / 2),
-            int(cy - self.CENTER_H / 2),
-            int(cx + self.CENTER_W / 2),
-            int(cy + self.CENTER_H / 2),
-        )
-
-        def collide(r1, r2):
-            return not (r1[2] < r2[0] or r1[0] > r2[2] or r1[3] < r2[1] or r1[1] > r2[3])
-
-        for i, (label, value, unit, color) in enumerate(items):
-            ang = math.radians(target_angles[i])
-            x = self.center + radius * math.cos(ang)
-            y = self.center + radius * math.sin(ang)
-
-            # 세이프존(링과 닿지 않게)
-            x = max(self.SAFE_INSET + card_w/2, min(self.diameter - self.SAFE_INSET - card_w/2, x))
-            y = max(self.SAFE_INSET + card_h/2, min(self.diameter - self.SAFE_INSET - card_h/2, y))
-
-            rect = (int(x - card_w/2), int(y - card_h/2), int(x + card_w/2), int(y + card_h/2))
-
-            # 중앙 패널과 충돌 회피(최대 3스텝)
-            step = 0
-            while collide(rect, center_rect) and step < 3:
-                x += 10 * math.cos(ang)
-                y += 10 * math.sin(ang)
-                rect = (int(x - card_w/2), int(y - card_h/2), int(x + card_w/2), int(y + card_h/2))
-                step += 1
-
-            self._rounded_rect(base, rect, radius=16, fill=(255, 255, 255, 230), outline=self.CARD_BORDER, width=2, shadow=True)
-            self._draw_text(draw, label, (x, rect[1] + 18), self.font_xs, self.TEXT_SUB)
-
-            if value is None:
-                self._draw_text(draw, "--", (x, y + 4), self.font_lg, self.TEXT_SUB)
+            self._rounded_rect(base, rect, 16, (255,255,255,230), outline=self.CARD_BORDER, width=2, shadow=True)
+            self._text(draw, label, (x, rect[1]+18), self.font_xs, self.TEXT_SUB)
+            if val is None:
+                self._text(draw, "--", (x, y+4), self.font_lg, self.TEXT_SUB)
             else:
-                self._draw_text(draw, f"{value:.1f}", (x - 24, y + 4), self.font_lg, color)
-                self._draw_text(draw, unit, (x + 58, y + 8), self.font_sm, color)
+                self._text(draw, f"{val:.1f}", (x-24, y+4), self.font_lg, color)
+                self._text(draw, unit, (x+58, y+8), self.font_sm, color)
 
-    def _draw_footer(self, draw: ImageDraw.ImageDraw, base: Image.Image, snapshot: SensorSnapshot):
-        cx, y = self.center, int(self.diameter * 0.92)
-        draw.line([(int(cx - self.diameter * 0.28), y - 26), (int(cx + self.diameter * 0.28), y - 26)],
-                  fill=self.CARD_BORDER, width=1)
+    def _footer(self, draw, base, snap:SensorSnapshot):
+        cx,y=self.center, int(self.diameter*0.92)
+        draw.line([(int(cx-self.diameter*0.28), y-26),(int(cx+self.diameter*0.28), y-26)], fill=self.CARD_BORDER, width=1)
+        now=datetime.now().strftime("%H:%M")
+        suffix=[]
+        if snap.noise is not None: suffix.append(f"{int(snap.noise)} dB")
+        if snap.pir  is not None:  suffix.append("PIR:ON" if snap.pir else "PIR:OFF")
+        txt = " | ".join([f"Time {now}"] + suffix) if suffix else f"Time {now}"
+        self._text(draw, txt, (cx,y), self.font_sm, self.TEXT_SUB)
 
-        now = datetime.now().strftime("%H:%M")
-        text = f"🕒 {now}"
-        suffix = ""
-        if snapshot.noise is not None:
-            suffix += f"  ·  🔊 {int(snapshot.noise)} dB"
-        if snapshot.pir is not None:
-            suffix += f"  ·  {'👁️' if snapshot.pir else '😴'}"
-        self._draw_text(draw, text + suffix, (cx, y), self.font_sm, self.TEXT_SUB)
-
-    # ---- 메인 렌더 ----
-    def render(self, snapshot: SensorSnapshot) -> Image.Image:
-        phase = self._phase_from_time(snapshot.ts or time.time())
-        pm = snapshot.pm25 if snapshot.pm25 is not None else 0.0
-        pm_tier = 0 if pm < 35 else (1 if pm < 75 else 2)
-
-        # 배경 캐시(시간대/PM tier/크기)
-        cache_key = (phase, pm_tier, self.diameter)
-        bg = self.bg_cache.get(cache_key)
-        tsec = time.time()
+    # ---- render ----
+    def render(self, snap:SensorSnapshot) -> Image.Image:
+        ph=self._phase(snap.ts or time.time()); pm=(snap.pm25 or 0.0); tier=0 if pm<35 else (1 if pm<75 else 2)
+        key=(ph,tier,self.diameter); bg=self.bg_cache.get(key); now=time.time()
         if bg is None:
-            sky = self._draw_sky(phase)
-            self._draw_sun_moon(sky, phase, snapshot.temp_c, snapshot.ts)
-            self._draw_clouds(sky, snapshot.pm25, tsec * 0)    # 정지 상태로 캡처
-            self._draw_hills(sky)
-            self._draw_haze(sky, snapshot.pm25, snapshot.hum)
-            self.bg_cache.set(cache_key, sky)
-            bg = sky
+            sky=self._sky(ph); self._sun_moon(sky, ph, snap.temp_c, snap.ts); self._clouds(sky, snap.pm25, 0.0)
+            self._hills(sky); self._haze(sky, snap.pm25, snap.hum)
+            self.bg_cache.set(key, sky); bg=sky
 
-        # 데이터 없음 -> 심플 대기 화면
-        if not snapshot.has_payload():
-            canvas = bg.copy()
-            draw = ImageDraw.Draw(canvas)
-            self._draw_text(draw, "Waiting for data...", (self.center, self.center - 6), self.font_lg, self.TEXT_SUB)
-            now = datetime.now().strftime("%H:%M")
-            self._draw_text(draw, now, (self.center, self.center + 34), self.font_md, self.TEXT_SUB)
-            final = Image.new("RGBA", (self.diameter, self.diameter), (255, 255, 255, 0))
-            mask = Image.new("L", (self.diameter, self.diameter), 0)
-            ImageDraw.Draw(mask).ellipse((0, 0, self.diameter, self.diameter), fill=255)
-            final.paste(canvas, (0, 0), mask)
-            ring_draw = ImageDraw.Draw(final)
-            ring_w = max(2, int(self.diameter * 0.004))
-            self._ring(ring_draw, (self.center, self.center), self.center - ring_w, ring_w, self.RING)
-            return final.convert("RGB")
+        canvas=bg.copy(); d=ImageDraw.Draw(canvas)
 
-        # 동적요소 캔버스
-        canvas = bg.copy()
-        draw = ImageDraw.Draw(canvas)
+        # dynamic
+        self._clouds(canvas, snap.pm25, now*0.10)
+        wind=0.0 + (0.9 if snap.pir else 0.0) + (max(0.0,min(1.0, ( (snap.noise or 40)-40 )/40.0))*0.6 if snap.noise is not None else 0.0)
+        self._grass(canvas, now, wind); self._dew(canvas, snap.hum); self._ripple(canvas, now, bool(snap.pir))
 
-        # 구름 애니메이션(느리게)
-        self._draw_clouds(canvas, snapshot.pm25, tsec * 0.10)
+        # UI
+        if snap.has_payload():
+            self._center_panel(d, canvas, snap)
+            self._sensor_cards(d, canvas, snap)
+            self._footer(d, canvas, snap)
+        else:
+            self._text(d, "Waiting for data...", (self.center, self.center-6), self.font_lg, self.TEXT_SUB)
+            self._text(d, datetime.now().strftime("%H:%M"), (self.center, self.center+34), self.font_md, self.TEXT_SUB)
 
-        # 잔디 스웨이 & 바닥
-        wind_strength = 0.0
-        if snapshot.pir:
-            wind_strength += 0.9
-        if snapshot.noise is not None:
-            wind_strength += max(0.0, min(1.0, (snapshot.noise - 40.0) / 40.0)) * 0.6
-        self._draw_grass(canvas, tsec, wind_strength)
-
-        # 습도 물방울/연무 강조
-        self._draw_dew(canvas, snapshot.hum)
-
-        # PIR 물결 리플
-        self._draw_ripple(canvas, tsec, bool(snapshot.pir))
-
-        # 중앙 패널/카드/푸터
-        self._draw_center_panel(draw, canvas, snapshot)
-        self._draw_sensor_cards(draw, canvas, snapshot)
-        self._draw_footer(draw, canvas, snapshot)
-
-        # 원형 마스크 + 링
-        mask = Image.new("L", (self.diameter, self.diameter), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, self.diameter, self.diameter), fill=255)
-        final = Image.new("RGBA", (self.diameter, self.diameter), (255, 255, 255, 0))
-        final.paste(canvas, (0, 0), mask)
-
-        ring_draw = ImageDraw.Draw(final)
-        ring_w = max(2, int(self.diameter * 0.004))  # 480기준 2px
-        self._ring(ring_draw, (self.center, self.center), self.center - ring_w, ring_w, self.RING)
+        # circle mask + ring
+        mask=Image.new("L",(self.diameter,self.diameter),0); ImageDraw.Draw(mask).ellipse((0,0,self.diameter,self.diameter), fill=255)
+        final=Image.new("RGBA",(self.diameter,self.diameter),(255,255,255,0)); final.paste(canvas,(0,0),mask)
+        ring_w=max(2,int(self.diameter*0.004)); self._ring(ImageDraw.Draw(final),(self.center,self.center), self.center-ring_w, ring_w, self.RING)
         return final.convert("RGB")
 
-    # ---- 프레젠트 ----
-    def present(self, image: Image.Image) -> None:
-        presented = False
+    def present(self, image):
+        shown=False
         if self.driver is not None:
             try:
-                if hasattr(self.driver, "display"):
-                    self.driver.display(image)
-                    presented = True
-                elif hasattr(self.driver, "image"):
-                    self.driver.image(image)
-                    presented = True
-            except Exception as e:
-                print(f"[Display] 드라이버 오류: {e}")
-
-        if not presented:
-            print("[Display] 드라이버가 없어 화면에 표시되지 않습니다.")
-
+                if hasattr(self.driver,"display"): self.driver.display(image); shown=True
+                elif hasattr(self.driver,"image"): self.driver.image(image); shown=True
+            except Exception as e: print(f"[Display] 드라이버 오류: {e}")
+        if not shown: print("[Display] 드라이버가 없어 화면에 표시되지 않습니다.")
         if self.dump_dir:
-            frame_path = self.dump_dir / f"frame_{self.frame_index:06d}.png"
-            image.save(frame_path)
-            print(f"[Display] 프레임 저장: {frame_path}")
-        self.frame_index += 1
+            p=self.dump_dir/f"frame_{self.frame_index:06d}.png"; image.save(p); print(f"[Display] 프레임 저장: {p}")
+        self.frame_index+=1
 
 
-# -----------------------------
-# Kafka 스트림
-# -----------------------------
+# -------------- Kafka consumer --------------
 class KafkaSensorStream:
-    def __init__(self, out_queue: queue.Queue[SensorSnapshot], *, debug: bool = False) -> None:
-        self.out_queue = out_queue
-        self.debug = debug
-        self._stop_evt = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        if KafkaConsumer is None:
-            raise RuntimeError(f"kafka-python import 실패: {_KAFKA_IMPORT_ERROR}")
-        self._stop_evt.clear()
-        self._thread = threading.Thread(target=self._run, name="kafka-sensor-consumer", daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop_evt.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-
-    def _publish(self, snapshot: SensorSnapshot) -> None:
-        try:
-            self.out_queue.put(snapshot, timeout=0.05)
+    def __init__(self, out_q: queue.Queue[SensorSnapshot], *, debug=False):
+        self.out_q=out_q; self.debug=debug; self._stop=threading.Event(); self._th=None
+    def start(self):
+        if KafkaConsumer is None: raise RuntimeError(f"kafka-python import 실패: {_KAFKA_IMPORT_ERROR}")
+        self._stop.clear(); self._th=threading.Thread(target=self._run, daemon=True); self._th.start()
+    def stop(self):
+        self._stop.set(); 
+        if self._th and self._th.is_alive(): self._th.join(timeout=2.0)
+    def _pub(self, snap):
+        try: self.out_q.put(snap, timeout=0.05)
         except queue.Full:
-            try:
-                self.out_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self.out_queue.put(snapshot, timeout=0.05)
+            try: self.out_q.get_nowait()
+            except queue.Empty: pass
+            try: self.out_q.put(snap, timeout=0.05)
             except queue.Full:
-                if self.debug:
-                    print("[Kafka] 출력 큐가 가득 찼습니다.")
-
-    def _run(self) -> None:
+                if self.debug: print("[Kafka] 출력 큐 full")
+    def _run(self):
         try:
-            print(f"[Kafka] 연결 시도 중... servers: {settings.bootstrap_servers}")
-            consumer = KafkaConsumer(
-                enable_auto_commit=True,
-                value_deserializer=lambda v: v.decode(settings.value_encoding, "ignore"),
-                consumer_timeout_ms=1000,
-                **settings.kafka_kwargs,
-            )
-            print(f"[Kafka] 소비자 생성 완료")
-            consumer.subscribe([settings.sensor_topic])
-            print(f"[Kafka] 토픽 구독 완료: {settings.sensor_topic}")
-        except Exception as exc:
-            print(f"[Kafka] 소비자 초기화 실패: {exc}")
-            return
-
-        while not self._stop_evt.is_set():
-            try:
-                records = consumer.poll(timeout_ms=500)
-            except Exception as exc:
-                print(f"[Kafka] poll 실패: {exc}")
-                time.sleep(1.0)
-                continue
-            if not records:
-                continue
-            for messages in records.values():
-                for message in messages:
-                    raw_value = message.value
-                    try:
-                        payload = json.loads(raw_value)
-                    except Exception as exc:
-                        if self.debug:
-                            print(f"[Kafka] JSON 파싱 실패: {exc} :: {raw_value!r}")
+            print(f"[Kafka] connect {settings.bootstrap_servers}")
+            consumer=KafkaConsumer(enable_auto_commit=True, value_deserializer=lambda v: v.decode(settings.value_encoding,"ignore"), consumer_timeout_ms=1000, **settings.kafka_kwargs)
+            consumer.subscribe([settings.sensor_topic]); print(f"[Kafka] subscribed: {settings.sensor_topic}")
+        except Exception as e:
+            print(f"[Kafka] init fail: {e}"); return
+        while not self._stop.is_set():
+            try: records=consumer.poll(timeout_ms=500)
+            except Exception as e: print(f"[Kafka] poll fail: {e}"); time.sleep(1.0); continue
+            if not records: continue
+            for msgs in records.values():
+                for msg in msgs:
+                    raw=msg.value
+                    try: payload=json.loads(raw)
+                    except Exception as e:
+                        if self.debug: print(f"[Kafka] JSON error: {e} :: {raw!r}")
                         continue
-                    snapshot = _snapshot_from_payload(payload)
-                    if snapshot is None:
-                        if self.debug:
-                            print(f"[Kafka] 지원하지 않는 페이로드: {payload}")
+                    snap=_snapshot_from_payload(payload)
+                    if snap is None:
+                        if self.debug: print(f"[Kafka] unsupported payload: {payload}")
                         continue
-                    snapshot.raw = payload
-                    snapshot.ingested_at = time.time()
-                    self._publish(snapshot)
-        try:
-            consumer.close()
-        except Exception:
-            pass
+                    snap.raw=payload; snap.ingested_at=time.time(); self._pub(snap)
+        try: consumer.close()
+        except Exception: pass
 
 
-# -----------------------------
-# 엔트리 포인트
-# -----------------------------
-def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Kafka -> 원형 디스플레이 센서 뷰어 (현실적 자연 테마 v2)")
-    p.add_argument("--diameter", type=int, default=settings.diameter_pixels, help="디스플레이 지름(px)")
-    p.add_argument("--font", type=str, default=settings.font_path, help="TTF 폰트 경로")
-    p.add_argument("--refresh-hz", type=float, default=settings.display_refresh_hz, help="화면 갱신 주기(Hz)")
-    p.add_argument("--frame-dump", type=str, default=None, help="프레임 저장 디렉터리(옵션)")
-    p.add_argument("--debug", action="store_true", help="디버그 로그")
+# -------------- Main --------------
+def build_arg_parser():
+    p=argparse.ArgumentParser(description="Circular sensor display (natural v3)")
+    p.add_argument("--diameter", type=int, default=settings.diameter_pixels)
+    p.add_argument("--font", type=str, default=settings.font_path)
+    p.add_argument("--refresh-hz", type=float, default=settings.display_refresh_hz)
+    p.add_argument("--frame-dump", type=str, default=None)
+    p.add_argument("--debug", action="store_true")
     return p
 
-
-def main() -> None:
-    if KafkaConsumer is None:
-        raise SystemExit(f"kafka-python import 실패: {_KAFKA_IMPORT_ERROR}")
-    if Image is None or ImageDraw is None or ImageFont is None:
-        raise SystemExit(f"Pillow import 실패: {_PILLOW_IMPORT_ERROR}")
-
-    args = build_arg_parser().parse_args()
-    print(f"[Main] 시작 - 디버그 모드: {args.debug}")
-    print(f"[Main] Kafka 설정: {settings.bootstrap_servers} / {settings.sensor_topic}")
-
-    refresh_hz = args.refresh_hz if args.refresh_hz > 0 else 1.0
-    refresh_period = 1.0 / refresh_hz
-
-    dump_dir = Path(args.frame_dump) if args.frame_dump else None
-    display = CircularNaturalDisplay(
-        diameter=args.diameter,
-        font_path=args.font,
-        dump_dir=dump_dir,
-    )
-
-    out_queue: queue.Queue[SensorSnapshot] = queue.Queue(maxsize=16)
-    stream = KafkaSensorStream(out_queue, debug=args.debug)
-    print("[Main] 카프카 스트림 시작...")
-    stream.start()
-
-    latest = SensorSnapshot()
-    next_frame = time.time()
-
+def main():
+    if KafkaConsumer is None: raise SystemExit(f"kafka-python import 실패: {_KAFKA_IMPORT_ERROR}")
+    if Image is None: raise SystemExit(f"Pillow import 실패: {_PILLOW_IMPORT_ERROR}")
+    args=build_arg_parser().parse_args()
+    refresh=max(0.1, args.refresh_hz); period=1.0/refresh
+    display=CircularNaturalDisplay(diameter=args.diameter, font_path=args.font, dump_dir=Path(args.frame_dump) if args.frame_dump else None)
+    out_q:queue.Queue[SensorSnapshot]=queue.Queue(maxsize=16); stream=KafkaSensorStream(out_q, debug=args.debug); stream.start()
+    latest=SensorSnapshot(); next_t=time.time()
     try:
         while True:
-            timeout = max(0.0, next_frame - time.time())
-            try:
-                snapshot = out_queue.get(timeout=timeout if timeout > 0 else 0.01)
-                latest = snapshot
-            except queue.Empty:
-                pass
-
-            now = time.time()
-            if now >= next_frame:
-                image = display.render(latest)
-                display.present(image)
-                next_frame = now + refresh_period
+            try: latest = out_q.get(timeout=max(0.0, next_t-time.time()))
+            except queue.Empty: pass
+            now=time.time()
+            if now>=next_t:
+                img=display.render(latest)
+                display.present(img)
+                next_t=now+period
     except KeyboardInterrupt:
         pass
     finally:
         stream.stop()
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
