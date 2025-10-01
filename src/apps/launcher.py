@@ -41,6 +41,12 @@ MODULE_REGISTRY: Dict[str, ModuleSpec] = {
         description="Sensor display (disabled until ready)",
         default=False,
     ),
+    "display-switcher": ModuleSpec(
+        target="apps.display_switcher",
+        description="Switch sensor display to carecall view when conversation events arrive",
+        default=False,
+    ),
+
 }
 
 DEFAULT_MODULES: Tuple[str, ...] = tuple(
