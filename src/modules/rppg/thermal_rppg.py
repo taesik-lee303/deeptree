@@ -1204,7 +1204,6 @@ if __name__ == "__main__":
         rr_period=2.0,
         sr_stride=3,
         mc_stride=2,
-        s=0.1,
         sensor_rotation_deg=135.0,
     )
     try:
