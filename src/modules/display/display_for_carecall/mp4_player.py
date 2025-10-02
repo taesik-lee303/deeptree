@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MP4 Player Module for Kafka Event-Driven Video Playback
+ Player Module for Kafka Event-Driven Video Playback
 카프카 이벤트 기반 MP4 재생 모듈
 """
 
