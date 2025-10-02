@@ -99,27 +99,32 @@ class MP4Player:
             "happy": VideoConfig(
                 file_path=str(video_dir / "happy.MOV"),
                 trigger_conditions={"emotion": "happy"},
-                priority=1
+                priority=1,
+                loop=True,
             ),
             "sad": VideoConfig(
                 file_path=str(video_dir / "sad.MOV"),
                 trigger_conditions={"emotion": "sad"},
-                priority=1
+                priority=1,
+                loop=True,
             ),
             "angry": VideoConfig(
                 file_path=str(video_dir / "angry.MOV"),
                 trigger_conditions={"emotion": "angry"},
-                priority=1
+                priority=1,
+                loop=True,
             ),
             "neutral": VideoConfig(
                 file_path=str(video_dir / "neutral.mp4"),
                 trigger_conditions={"emotion": "neutral"},
-                priority=0
+                priority=0,
+                loop=True,
             ),
             "default": VideoConfig(
                 file_path=self.config.default_video or str(video_dir / "default.MOV"),
                 trigger_conditions={},
-                priority=-1
+                priority=-1,
+                loop=True,
             )
         }
 
@@ -231,6 +236,14 @@ class MP4Player:
 
         self.logger.debug(f"Processing message: {data}")
 
+        if data.get("end"):
+            self.logger.info("Received conversation end event; stopping playback")
+            self.last_event_time = 0
+            self.last_event_data = None
+            self._stop_current_video()
+            self.state = PlayerState.IDLE
+            return
+
         # 이벤트 핸들러 호출
         for handler in self.event_handlers:
             try:
@@ -294,6 +307,14 @@ class MP4Player:
         """비디오 재생"""
         if not Path(config.file_path).exists():
             self.logger.error(f"Video file not found: {config.file_path}")
+            return
+
+        if (
+            self.current_process
+            and self.current_video == config.file_path
+            and self.state == PlayerState.PLAYING
+        ):
+            self.logger.debug("Requested video already playing; keep looping")
             return
 
         # 현재 재생 중인 비디오 중지

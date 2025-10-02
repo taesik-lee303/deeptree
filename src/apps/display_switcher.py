@@ -127,6 +127,7 @@ class DisplaySwitcher:
         await self.carecall.stop()
         await self.sensor.ensure_running()
         self.state = "sensor"
+        self._last_carecall_event = 0.0
 
     async def handle_carecall_event(self) -> None:
         self._last_carecall_event = time.time()
@@ -411,13 +412,19 @@ async def run(args: argparse.Namespace) -> int:
                 continue
 
             if msg_type == "event":
-                if args.log_events:
+                data = payload
+                if isinstance(payload, str):
                     try:
-                        data = json.loads(payload) if isinstance(payload, str) else payload
+                        data = json.loads(payload)
                     except Exception:
-                        data = payload
+                        data = {"raw": payload}
+                if args.log_events:
                     print(f"[switcher] carecall event: {data}")
-                await switcher.handle_carecall_event()
+
+                if isinstance(data, dict) and data.get("end"):
+                    await switcher.switch_to_sensor()
+                else:
+                    await switcher.handle_carecall_event()
             elif msg_type == "error":
                 kafka_active = False
                 print(f"[switcher] Kafka 오류: {payload}")
