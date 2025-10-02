@@ -144,6 +144,7 @@ class DisplaySwitcher:
                 await self.carecall.ensure_running()
         else:
             await self.sensor.ensure_running()
+            await self.carecall.stop()
 
     async def shutdown(self) -> None:
         await self.carecall.stop()
