@@ -214,7 +214,11 @@ class DeepCareSystem:
         if normalized in self._wake_phrases_norm:
             return True
         # 부분 포함(호출어가 긴 문장 속에 포함된 경우) 체크
-        return any(phrase in normalized for phrase in self._wake_phrases_norm)
+        if any(phrase in normalized for phrase in self._wake_phrases_norm):
+            return True
+        if "시작" in normalized:
+            return True
+        return False
 
     def run_stt_only(self):
         """STT만 실행"""
