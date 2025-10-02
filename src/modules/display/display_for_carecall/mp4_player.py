@@ -97,17 +97,17 @@ class MP4Player:
         # 기본 비디오 파일 매핑
         emotion_videos = {
             "happy": VideoConfig(
-                file_path=str(video_dir / "happy.mp4"),
+                file_path=str(video_dir / "happy.MOV"),
                 trigger_conditions={"emotion": "happy"},
                 priority=1
             ),
             "sad": VideoConfig(
-                file_path=str(video_dir / "sad.mp4"),
+                file_path=str(video_dir / "sad.MOV"),
                 trigger_conditions={"emotion": "sad"},
                 priority=1
             ),
             "angry": VideoConfig(
-                file_path=str(video_dir / "angry.mp4"),
+                file_path=str(video_dir / "angry.MOV"),
                 trigger_conditions={"emotion": "angry"},
                 priority=1
             ),
@@ -117,7 +117,7 @@ class MP4Player:
                 priority=0
             ),
             "default": VideoConfig(
-                file_path=self.config.default_video or str(video_dir / "default.mp4"),
+                file_path=self.config.default_video or str(video_dir / "default.MOV"),
                 trigger_conditions={},
                 priority=-1
             )
