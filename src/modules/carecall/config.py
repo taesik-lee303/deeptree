@@ -243,7 +243,7 @@ def create_sample_config():
     config = Config()
     config.openai.api_key = "YOUR_OPENAI_API_KEY_HERE"
     config.server.base_url = "http://your-ai-server.com/api"
-    config.activation.wake_phrases = ["케어콜 시작", "케어콜 시작해줘"]
+    config.activation.wake_phrases = ["케어콜 시작", "케어콜 시작해줘","어콜 시작", "어콜 시작해줘","에어콜 시작", "에어콜 시작해줘"]
     config.save_config("config_sample.json")
     print("샘플 설정 파일이 config_sample.json으로 생성되었습니다.")
 
