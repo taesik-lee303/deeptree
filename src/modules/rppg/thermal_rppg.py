@@ -13,6 +13,9 @@ from typing import Tuple, Dict, Optional
 import numpy as np
 import cv2
 from scipy import signal
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.preprocessing import StandardScaler
+import pickle
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
@@ -97,10 +100,10 @@ class ThermalrPPGConfig:
     motion_px_warn: float = 6.0
     snr_min: float = 1.6
 
-    # Presence (face) gate
-    temp_face_min: float = 28.5
-    temp_face_max: float = 39.0
-    min_ambient_delta: float = 0.0
+    # Presence (face) gate - 더 관대한 온도 범위
+    temp_face_min: float = 26.0  # 더 낮은 최소 온도
+    temp_face_max: float = 42.0  # 더 높은 최대 온도
+    min_ambient_delta: float = 0.0  # ambient 델타 요구사항 완화
     snr_face_min: float = 1.5
     hr_agreement_bpm: float = 10.0
     harmonic_min_ratio: float = 0.08
@@ -110,6 +113,467 @@ class ThermalrPPGConfig:
     hr_slope_bpm_per_s: float = 15.0   # 초당 허용 변화량
     hr_ema_alpha: float = 0.2          # 저역 평활(0..1)
     sensor_rotation_deg: float = 0.0   # +값=반시계(CCW). 예) 135.0
+    
+    # AI Enhancement parameters
+    enable_ensemble_learning: bool = True
+    enable_wavelet_denoising: bool = True
+    enable_adaptive_filtering: bool = True
+    enable_personalized_model: bool = True
+    model_update_interval: float = 300.0  # 5분마다 모델 업데이트
+    
+    # Raspberry Pi optimization parameters
+    enable_pi_optimization: bool = True
+    pi_memory_limit_mb: int = 512  # 메모리 사용량 제한
+    pi_cpu_throttle: bool = True   # CPU 부하 제한
+    pi_reduced_precision: bool = True  # 정밀도 감소로 성능 향상
+    
+    # Fast measurement parameters
+    enable_fast_mode: bool = False
+    fast_min_duration: int = 6      # 빠른 모드 최소 측정 시간 (초)
+    fast_hr_period: float = 0.5     # 빠른 모드 HR 계산 주기
+    fast_present_frames: int = 3    # 빠른 모드 얼굴 인식 프레임
+    fast_sampling_rate: float = 20.0 # 빠른 모드 샘플링 레이트
+
+
+# --------------------- AI Enhancement Classes ---------------------
+class WaveletDenoiser:
+    """웨이블릿 변환을 이용한 적응형 노이즈 제거"""
+    def __init__(self, wavelet='db4', threshold_mode='soft'):
+        self.wavelet = wavelet
+        self.threshold_mode = threshold_mode
+        self.threshold_history = deque(maxlen=100)
+        
+    def denoise_signal(self, signal, noise_variance=None):
+        """웨이블릿 기반 노이즈 제거"""
+        try:
+            from pywt import wavedec, waverec, threshold
+            
+            # 웨이블릿 분해
+            coeffs = wavedec(signal, self.wavelet, mode='symmetric')
+            
+            # 적응형 임계값 계산
+            if noise_variance is None:
+                # 첫 번째 디테일 계수에서 노이즈 분산 추정
+                sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+            else:
+                sigma = np.sqrt(noise_variance)
+            
+            # 임계값 계산 (BayesShrink 방식)
+            threshold_val = sigma * np.sqrt(2 * np.log(len(signal)))
+            self.threshold_history.append(threshold_val)
+            
+            # 임계값 적용
+            coeffs_thresh = []
+            coeffs_thresh.append(coeffs[0])  # 근사 계수는 그대로
+            
+            for detail in coeffs[1:]:
+                coeffs_thresh.append(threshold(detail, threshold_val, self.threshold_mode))
+            
+            # 역변환
+            denoised = waverec(coeffs_thresh, self.wavelet)
+            
+            return denoised[:len(signal)]  # 길이 맞춤
+            
+        except ImportError:
+            logger.warning("PyWavelets not available. Using basic filtering.")
+            return signal
+        except Exception as e:
+            logger.warning(f"Wavelet denoising failed: {e}")
+            return signal
+
+
+class AdaptiveKalmanFilter:
+    """적응형 칼만 필터를 이용한 HR 추정"""
+    def __init__(self, process_noise=0.01, measurement_noise=0.1):
+        self.Q = process_noise  # 프로세스 노이즈
+        self.R = measurement_noise  # 측정 노이즈
+        self.x = 0.0  # 상태 (HR)
+        self.P = 1.0  # 오차 공분산
+        self.initialized = False
+        
+    def update(self, measurement, dt=1.0):
+        """측정값으로 상태 업데이트"""
+        if not self.initialized:
+            self.x = measurement
+            self.initialized = True
+            return self.x
+            
+        # 예측 단계
+        F = 1.0  # 상태 전이 행렬 (HR은 일정하다고 가정)
+        self.x = F * self.x
+        self.P = F * self.P * F + self.Q * dt
+        
+        # 업데이트 단계
+        H = 1.0  # 측정 행렬
+        y = measurement - H * self.x  # 잔차
+        S = H * self.P * H + self.R  # 잔차 공분산
+        K = self.P * H / S  # 칼만 게인
+        
+        self.x = self.x + K * y
+        self.P = (1 - K * H) * self.P
+        
+        return self.x
+    
+    def adapt_noise(self, innovation_history):
+        """혁신 시퀀스를 이용한 노이즈 적응"""
+        if len(innovation_history) < 10:
+            return
+            
+        # 혁신의 분산으로 측정 노이즈 추정
+        innovation_var = np.var(innovation_history)
+        self.R = max(0.01, min(1.0, innovation_var))
+
+
+class EnsembleROIOptimizer:
+    """앙상블 학습을 이용한 ROI 가중치 최적화"""
+    def __init__(self, pi_optimizer=None):
+        # 라즈베리파이 최적화 적용
+        if pi_optimizer and pi_optimizer.is_pi:
+            n_estimators = 20  # 라즈베리파이용으로 축소
+            max_history = 200
+        else:
+            n_estimators = 50  # 기본값
+            max_history = 1000
+            
+        self.rf_model = RandomForestRegressor(n_estimators=n_estimators, random_state=42)
+        self.gb_model = GradientBoostingRegressor(n_estimators=n_estimators, random_state=42)
+        self.scaler = StandardScaler()
+        self.is_trained = False
+        self.feature_history = deque(maxlen=max_history)
+        self.target_history = deque(maxlen=max_history)
+        self.pi_optimizer = pi_optimizer
+        
+    def extract_features(self, roi_diag, motion_level, ambient_temp):
+        """ROI 진단 정보에서 특징 추출"""
+        features = []
+        
+        roi_names = ['forehead', 'l_cheek', 'r_cheek', 'nose']
+        for name in roi_names:
+            roi_data = roi_diag.get(name, {})
+            features.extend([
+                roi_data.get('snr', 0.0),
+                roi_data.get('q', 0.0),
+                roi_data.get('harm', 0.0),
+                roi_data.get('hr', 0.0)
+            ])
+        
+        # 전체 통계
+        snrs = [roi_diag.get(name, {}).get('snr', 0.0) for name in roi_names]
+        hrs = [roi_diag.get(name, {}).get('hr', 0.0) for name in roi_names]
+        
+        features.extend([
+            np.mean(snrs),
+            np.std(snrs),
+            np.mean(hrs),
+            np.std(hrs),
+            motion_level,
+            ambient_temp
+        ])
+        
+        return np.array(features)
+    
+    def update_model(self, roi_diag, motion_level, ambient_temp, true_hr=None):
+        """모델 업데이트 (온라인 학습)"""
+        features = self.extract_features(roi_diag, motion_level, ambient_temp)
+        self.feature_history.append(features)
+        
+        if true_hr is not None:
+            self.target_history.append(true_hr)
+            
+            # 충분한 데이터가 쌓이면 모델 재훈련
+            if len(self.target_history) >= 50 and len(self.target_history) % 20 == 0:
+                self._retrain_model()
+    
+    def _retrain_model(self):
+        """앙상블 모델 재훈련"""
+        if len(self.feature_history) < 20:
+            return
+            
+        X = np.array(list(self.feature_history))
+        y = np.array(list(self.target_history))
+        
+        try:
+            X_scaled = self.scaler.fit_transform(X)
+            self.rf_model.fit(X_scaled, y)
+            self.gb_model.fit(X_scaled, y)
+            self.is_trained = True
+            logger.info(f"Ensemble model retrained with {len(y)} samples")
+        except Exception as e:
+            logger.warning(f"Model retraining failed: {e}")
+    
+    def predict_optimal_weights(self, roi_diag, motion_level, ambient_temp):
+        """최적 ROI 가중치 예측"""
+        if not self.is_trained:
+            return self._default_weights(roi_diag)
+            
+        features = self.extract_features(roi_diag, motion_level, ambient_temp)
+        features_scaled = self.scaler.transform(features.reshape(1, -1))
+        
+        # 앙상블 예측
+        rf_pred = self.rf_model.predict(features_scaled)[0]
+        gb_pred = self.gb_model.predict(features_scaled)[0]
+        ensemble_pred = (rf_pred + gb_pred) / 2
+        
+        # 예측된 HR과 실제 ROI HR의 차이로 가중치 계산
+        roi_names = ['forehead', 'l_cheek', 'r_cheek', 'nose']
+        weights = {}
+        
+        for name in roi_names:
+            roi_hr = roi_diag.get(name, {}).get('hr', 0.0)
+            if roi_hr > 0:
+                # 예측값과의 차이가 작을수록 높은 가중치
+                error = abs(roi_hr - ensemble_pred)
+                weight = np.exp(-error / 10.0)  # 지수 감쇠
+                weights[name] = max(0.1, min(2.0, weight))
+            else:
+                weights[name] = 0.1
+                
+        return weights
+    
+    def _default_weights(self, roi_diag):
+        """기본 가중치 (모델이 훈련되지 않았을 때)"""
+        roi_names = ['forehead', 'l_cheek', 'r_cheek', 'nose']
+        weights = {}
+        
+        for name in roi_names:
+            roi_data = roi_diag.get(name, {})
+            snr = roi_data.get('snr', 0.0)
+            q = roi_data.get('q', 0.0)
+            
+            # SNR과 품질 기반 기본 가중치
+            weight = 1.0
+            if snr > 2.0:
+                weight *= 1.2
+            elif snr < 1.0:
+                weight *= 0.8
+                
+            if q > 0.7:
+                weight *= 1.1
+            elif q < 0.3:
+                weight *= 0.9
+                
+            weights[name] = max(0.1, min(2.0, weight))
+            
+        return weights
+
+
+class PersonalizedBiometricModel:
+    """개인화된 생체신호 모델"""
+    def __init__(self):
+        self.user_profile = {
+            'baseline_hr': None,
+            'hr_variability': None,
+            'thermal_patterns': {},
+            'adaptation_rate': 0.1
+        }
+        self.adaptation_history = deque(maxlen=500)
+        
+    def update_profile(self, hr, thermal_features, ambient_conditions):
+        """사용자 프로필 업데이트"""
+        if hr is None:
+            return
+            
+        self.adaptation_history.append({
+            'hr': hr,
+            'thermal_features': thermal_features,
+            'ambient': ambient_conditions,
+            'timestamp': time.time()
+        })
+        
+        # 베이스라인 HR 업데이트
+        if self.user_profile['baseline_hr'] is None:
+            self.user_profile['baseline_hr'] = hr
+        else:
+            alpha = self.user_profile['adaptation_rate']
+            self.user_profile['baseline_hr'] = (
+                (1 - alpha) * self.user_profile['baseline_hr'] + alpha * hr
+            )
+        
+        # HR 변동성 계산
+        if len(self.adaptation_history) >= 30:
+            hrs = [h['hr'] for h in list(self.adaptation_history)[-30:]]
+            self.user_profile['hr_variability'] = np.std(hrs)
+    
+    def get_personalized_correction(self, raw_hr, thermal_features):
+        """개인화된 보정값 반환"""
+        if self.user_profile['baseline_hr'] is None:
+            return raw_hr
+            
+        baseline = self.user_profile['baseline_hr']
+        variability = self.user_profile['hr_variability'] or 5.0
+        
+        # 개인별 특성에 따른 보정
+        correction_factor = 1.0
+        
+        # 베이스라인에서 크게 벗어나면 보정
+        hr_diff = abs(raw_hr - baseline)
+        if hr_diff > variability * 2:
+            correction_factor = 0.8  # 급격한 변화 억제
+        
+        return raw_hr * correction_factor + baseline * (1 - correction_factor)
+
+
+class RaspberryPiOptimizer:
+    """라즈베리파이 최적화 클래스"""
+    def __init__(self, cfg: ThermalrPPGConfig):
+        self.cfg = cfg
+        self.memory_monitor = deque(maxlen=100)
+        self.cpu_monitor = deque(maxlen=100)
+        self.is_pi = self._detect_raspberry_pi()
+        
+        if self.is_pi:
+            logger.info("Raspberry Pi detected. Enabling optimizations.")
+            self._apply_pi_optimizations()
+    
+    def _detect_raspberry_pi(self):
+        """라즈베리파이 감지"""
+        try:
+            with open('/proc/cpuinfo', 'r') as f:
+                cpuinfo = f.read()
+                return 'BCM' in cpuinfo or 'Raspberry Pi' in cpuinfo
+        except:
+            return False
+    
+    def _apply_pi_optimizations(self):
+        """라즈베리파이 최적화 적용"""
+        if not self.cfg.enable_pi_optimization:
+            return
+            
+        # NumPy 최적화
+        try:
+            import numpy as np
+            # BLAS 라이브러리 최적화
+            os.environ['OPENBLAS_NUM_THREADS'] = '2'
+            os.environ['MKL_NUM_THREADS'] = '2'
+            os.environ['NUMEXPR_NUM_THREADS'] = '2'
+            os.environ['OMP_NUM_THREADS'] = '2'
+        except:
+            pass
+    
+    def monitor_resources(self):
+        """리소스 모니터링"""
+        if not self.is_pi:
+            return
+            
+        try:
+            import psutil
+            memory_percent = psutil.virtual_memory().percent
+            cpu_percent = psutil.cpu_percent()
+            
+            self.memory_monitor.append(memory_percent)
+            self.cpu_monitor.append(cpu_percent)
+            
+            # 메모리 사용량이 높으면 경고
+            if memory_percent > 85:
+                logger.warning(f"High memory usage: {memory_percent:.1f}%")
+                return True  # 최적화 필요
+                
+            # CPU 사용량이 높으면 경고
+            if cpu_percent > 90:
+                logger.warning(f"High CPU usage: {cpu_percent:.1f}%")
+                return True  # 최적화 필요
+                
+        except ImportError:
+            pass
+            
+        return False
+    
+    def optimize_for_pi(self, model_config):
+        """라즈베리파이용 모델 설정 최적화"""
+        if not self.is_pi or not self.cfg.enable_pi_optimization:
+            return model_config
+            
+        # 메모리 사용량 제한
+        if hasattr(model_config, 'n_estimators'):
+            model_config.n_estimators = min(model_config.n_estimators, 20)  # 기본 50에서 20으로
+            
+        # 히스토리 크기 제한
+        if hasattr(model_config, 'maxlen'):
+            model_config.maxlen = min(model_config.maxlen, 200)  # 기본 1000에서 200으로
+            
+        return model_config
+    
+    def get_optimized_config(self):
+        """라즈베리파이용 최적화된 설정 반환"""
+        if not self.is_pi:
+            return {}
+            
+        return {
+            'reduced_precision': self.cfg.pi_reduced_precision,
+            'memory_limit': self.cfg.pi_memory_limit_mb,
+            'cpu_throttle': self.cfg.pi_cpu_throttle,
+            'smaller_models': True,
+            'reduced_history': True
+        }
+
+
+class FastMeasurementMode:
+    """빠른 측정 모드 클래스"""
+    def __init__(self, cfg: ThermalrPPGConfig):
+        self.cfg = cfg
+        self.is_active = cfg.enable_fast_mode
+        self.measurement_start_time = None
+        self.first_hr_time = None
+        self.first_rr_time = None
+        
+        if self.is_active:
+            logger.info("Fast measurement mode enabled")
+            self._apply_fast_settings()
+    
+    def _apply_fast_settings(self):
+        """빠른 측정을 위한 설정 적용"""
+        # 설정값들을 빠른 모드로 변경
+        self.cfg.min_measurement_duration = self.cfg.fast_min_duration
+        self.cfg.hr_period = self.cfg.fast_hr_period
+        self.cfg.present_rise_frames = self.cfg.fast_present_frames
+        self.cfg.sampling_rate = self.cfg.fast_sampling_rate
+        
+        logger.info(f"Fast mode settings: min_duration={self.cfg.min_measurement_duration}s, "
+                   f"hr_period={self.cfg.hr_period}s, sampling={self.cfg.sampling_rate}Hz")
+    
+    def start_measurement(self):
+        """측정 시작 시간 기록"""
+        self.measurement_start_time = time.time()
+        logger.info("Fast measurement started")
+    
+    def get_elapsed_time(self):
+        """경과 시간 반환"""
+        if self.measurement_start_time is None:
+            return 0.0
+        return time.time() - self.measurement_start_time
+    
+    def record_first_hr(self):
+        """첫 HR 측정 시간 기록"""
+        if self.first_hr_time is None:
+            self.first_hr_time = time.time()
+            elapsed = self.get_elapsed_time()
+            logger.info(f"First HR measurement: {elapsed:.2f}s")
+    
+    def record_first_rr(self):
+        """첫 RR 측정 시간 기록"""
+        if self.first_rr_time is None:
+            self.first_rr_time = time.time()
+            elapsed = self.get_elapsed_time()
+            logger.info(f"First RR measurement: {elapsed:.2f}s")
+    
+    def get_measurement_stats(self):
+        """측정 통계 반환"""
+        if self.measurement_start_time is None:
+            return {}
+        
+        stats = {
+            'total_elapsed': self.get_elapsed_time(),
+            'first_hr_time': None,
+            'first_rr_time': None
+        }
+        
+        if self.first_hr_time:
+            stats['first_hr_time'] = self.first_hr_time - self.measurement_start_time
+        
+        if self.first_rr_time:
+            stats['first_rr_time'] = self.first_rr_time - self.measurement_start_time
+        
+        return stats
 
 
 # --------------------- Utils ---------------------
@@ -245,9 +709,9 @@ class MultiFrameSuperRes:
 
 # --------------------- Detection / Tracking ---------------------
 class ThermalFaceDetector:
-    def __init__(self, ambient_delta: float = 1.2, p_hot: float = 80.0,
-                 min_area_frac: float = 0.02, max_area_frac: float = 0.45,
-                 top_bias: float = 0.55, search_expand: float = 0.6, lost_tolerance: int = 12):
+    def __init__(self, ambient_delta: float = 0.8, p_hot: float = 75.0,  # 더 관대한 임계값
+                 min_area_frac: float = 0.015, max_area_frac: float = 0.5,  # 면적 범위 확대
+                 top_bias: float = 0.5, search_expand: float = 0.8, lost_tolerance: int = 20):  # 더 관대한 설정
         self.ambient_delta = ambient_delta
         self.p_hot = p_hot
         self.min_area_frac = min_area_frac
@@ -315,7 +779,21 @@ class ThermalFaceDetector:
         cx_img, cy_img = W*0.5, H*self.top_bias
         frame_u8 = normalize_to_uint8(frame)
 
+        # 디버깅 정보 수집
+        debug_info = {
+            'frame_stats': {
+                'min': float(np.min(frame)),
+                'max': float(np.max(frame)),
+                'mean': float(np.mean(frame)),
+                'std': float(np.std(frame))
+            },
+            'detection_method': 'none',
+            'components_found': 0,
+            'threshold_stats': {}
+        }
+
         if self.last_bbox is not None and self.missed < self.lost_tolerance:
+            debug_info['detection_method'] = 'tracking'
             lx, ly, lw, lh = self.last_bbox
             ex = int(lw*self.search_expand)
             ey = int(lh*self.search_expand)
@@ -329,6 +807,8 @@ class ThermalFaceDetector:
             hot = cv2.morphologyEx(hot, cv2.MORPH_OPEN, k, iterations=1)
             hot = cv2.morphologyEx(hot, cv2.MORPH_CLOSE, k, iterations=2)
             num, labels, stats, cents = cv2.connectedComponentsWithStats(hot, 8)
+            debug_info['components_found'] = num - 1  # 배경 제외
+            
             if num > 1:
                 bbox = self._score_components(local, stats, cents, cx_img - sx, cy_img - sy)
                 if bbox is not None:
@@ -338,32 +818,65 @@ class ThermalFaceDetector:
                     roi_u8 = frame_u8[sy+y:sy+y+h, sx+x:sx+x+w]
                     if roi_u8.size >= 9:
                         self.last_template = cv2.resize(roi_u8, (max(8, w), max(8, h)))
+                    debug_info['detection_method'] = 'tracking_components'
                     return self.last_bbox
             track = self._template_track(frame_u8, (sx, sy, sw, sh))
             if track is not None:
                 self.last_bbox = track
                 self.missed = 0
+                debug_info['detection_method'] = 'tracking_template'
                 return self.last_bbox
             self.missed += 1
 
+        # 전체 프레임 검색
+        debug_info['detection_method'] = 'full_frame'
         hot = self._threshold(frame)
+        
+        # 임계값 통계 수집
+        ambient = float(np.median(frame))
+        t1 = ambient + self.ambient_delta
+        t2 = float(np.percentile(frame, self.p_hot))
+        thr = max(t1, t2)
+        debug_info['threshold_stats'] = {
+            'ambient': ambient,
+            'threshold_delta': t1,
+            'percentile_hot': t2,
+            'final_threshold': thr,
+            'hot_pixels': int(np.sum(hot))
+        }
+        
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         hot = cv2.morphologyEx(hot, cv2.MORPH_OPEN, k, iterations=1)
         hot = cv2.morphologyEx(hot, cv2.MORPH_CLOSE, k, iterations=2)
         num, labels, stats, cents = cv2.connectedComponentsWithStats(hot, 8)
+        debug_info['components_found'] = num - 1  # 배경 제외
+        
         if num <= 1:
             self.missed += 1
+            # 디버깅 로그 출력
+            if self.missed % 30 == 0:  # 30프레임마다 로그
+                logger.warning(f"얼굴 인식 실패 - 컴포넌트 없음: {debug_info}")
             return None
+            
         bbox = self._score_components(frame, stats, cents, cx_img, cy_img)
         if bbox is None:
             self.missed += 1
+            # 디버깅 로그 출력
+            if self.missed % 30 == 0:  # 30프레임마다 로그
+                logger.warning(f"얼굴 인식 실패 - 스코어링 실패: {debug_info}")
             return None
+            
         self.last_bbox = bbox
         self.missed = 0
         x, y, w, h = bbox
         roi_u8 = frame_u8[y:y+h, x:x+w]
         if roi_u8.size >= 9:
             self.last_template = cv2.resize(roi_u8, (max(8, w), max(8, h)))
+        
+        # 성공 시 디버깅 로그
+        if self.missed == 0:  # 첫 성공이거나 연속 성공
+            logger.info(f"얼굴 인식 성공: {debug_info}")
+            
         return self.last_bbox
 
 
@@ -607,6 +1120,23 @@ class PresenceGate:
                 self.present = False
 
         self.last_reason = ",".join(reasons) if reasons else "ok"
+        
+        # 디버깅 정보 로깅
+        if not ok and (self.fail_cnt % 60 == 0):  # 60프레임마다 로그 (약 4초마다)
+            temp_info = {
+                'bbox': bbox,
+                'fh': fh,
+                'nose': nose,
+                'lch': lch,
+                'rch': rch,
+                'ambient': ambient,
+                'fh_range': f"{c.temp_face_min}-{c.temp_face_max}",
+                'ambient_delta': c.min_ambient_delta
+            }
+            logger.warning(f"PresenceGate 실패: {reasons} | 온도정보: {temp_info}")
+        elif ok and self.present and (self.pass_cnt % 60 == 0):  # 성공 시에도 주기적 로그
+            logger.info(f"PresenceGate 성공: 온도정보 fh={fh:.1f}°C, nose={nose:.1f}°C, ambient={ambient:.1f}°C")
+            
         return self.present, self.last_reason
 
 
@@ -708,6 +1238,14 @@ class MonitorUI:
         put("ΔT_cheeks", f"{dT_cheek:+.2f}°C" if dT_cheek is not None else "--")
         put("View", self.compare_mode)
         put("Keys", "Q:quit  S:snap  T:view")
+        
+        # 얼굴 인식 상태 표시 개선
+        if bbox is not None:
+            x, y, w, h = bbox
+            put("Face", f"OK ({w}x{h})")
+        else:
+            put("Face", "NOT DETECTED")
+            
         put("Track", "OK" if tracking_ok else "LOST")
         if artifacts and line + 18 < h:
             cv2.putText(panel, f"Art: {artifacts}", (10, line), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180,180,180), 1)
@@ -780,8 +1318,28 @@ class ThermalrPPG:
         self.presence = PresenceGate(cfg)
         self._hr_smooth: Optional[float] = None
         self._hr_ts: Optional[float] = None
+        
+        # Raspberry Pi optimization
+        self.pi_optimizer = RaspberryPiOptimizer(cfg)
+        
+        # Fast measurement mode
+        self.fast_mode = FastMeasurementMode(cfg)
+        
+        # AI Enhancement components
+        self.wavelet_denoiser = WaveletDenoiser() if cfg.enable_wavelet_denoising else None
+        self.kalman_filter = AdaptiveKalmanFilter() if cfg.enable_adaptive_filtering else None
+        self.ensemble_optimizer = EnsembleROIOptimizer(self.pi_optimizer) if cfg.enable_ensemble_learning else None
+        self.personalized_model = PersonalizedBiometricModel() if cfg.enable_personalized_model else None
+        
+        # AI model update tracking
+        self._last_model_update = time.time()
+        self._innovation_history = deque(maxlen=50)
 
         logger.info(f"Config: sampling={cfg.sampling_rate}Hz, mode={cfg.processing_mode.value}")
+        logger.info(f"AI Enhancements: Wavelet={cfg.enable_wavelet_denoising}, "
+                   f"Kalman={cfg.enable_adaptive_filtering}, "
+                   f"Ensemble={cfg.enable_ensemble_learning}, "
+                   f"Personalized={cfg.enable_personalized_model}")
 
     # ---------- helpers ----------
     def _append(self, roi_vals: Dict[str, float], ambient: Optional[float]):
@@ -830,6 +1388,14 @@ class ThermalrPPG:
                     ema = (1 - alpha) * ema + alpha * v
                 self._ambient_ema = float(ema)
                 x = x - self.cfg.ambient_gain * (amb - np.mean(amb))
+        
+        # 웨이블릿 노이즈 제거 적용
+        if self.wavelet_denoiser is not None and len(x) >= 16:
+            try:
+                x = self.wavelet_denoiser.denoise_signal(x)
+            except Exception as e:
+                logger.warning(f"Wavelet denoising failed for {name}: {e}")
+        
         return x
 
     def _compute_hr(self):
@@ -867,16 +1433,43 @@ class ThermalrPPG:
             } for i in range(len(names))
         }
 
-        # 🔹 적응형 ROI 가중치 적용
-        roi_boost = self._roi_dynamic_boost(diag)
-        w = q_arr.copy()
-        for i, name in enumerate(names):
-            w[i] *= roi_boost.get(name, 1.0)
+        # 🔹 AI 기반 ROI 가중치 최적화
+        if self.ensemble_optimizer is not None:
+            # 앙상블 학습으로 최적 가중치 예측
+            optimal_weights = self.ensemble_optimizer.predict_optimal_weights(
+                diag, self.motion.motion_level, 
+                float(np.mean([roi_vals.get('forehead', 0) for roi_vals in [self.buffers.get('forehead', [])]]))
+            )
+            w = np.array([optimal_weights.get(name, 1.0) for name in names])
+        else:
+            # 기존 방식
+            roi_boost = self._roi_dynamic_boost(diag)
+            w = q_arr.copy()
+            for i, name in enumerate(names):
+                w[i] *= roi_boost.get(name, 1.0)
+        
         w = w / (w.sum() + 1e-6)
 
         # 최종 HR/Q
         hr_final = float(np.sum(np.array(hrs) * w))
         q_final  = float(np.mean(q_arr))
+        
+        # 칼만 필터 적용
+        if self.kalman_filter is not None:
+            hr_final = self.kalman_filter.update(hr_final)
+            # 혁신 시퀀스 업데이트
+            if len(self._innovation_history) > 0:
+                innovation = hr_final - self._innovation_history[-1] if len(self._innovation_history) > 0 else 0
+                self._innovation_history.append(innovation)
+                self.kalman_filter.adapt_noise(list(self._innovation_history))
+        
+        # 개인화된 보정 적용
+        if self.personalized_model is not None:
+            thermal_features = {
+                'motion_level': self.motion.motion_level,
+                'ambient_temp': float(np.mean([roi_vals.get('forehead', 0) for roi_vals in [self.buffers.get('forehead', [])]]))
+            }
+            hr_final = self.personalized_model.get_personalized_correction(hr_final, thermal_features)
 
         return hr_final, q_final, diag
 
@@ -1066,6 +1659,36 @@ class ThermalrPPG:
         rotated = cv2.warpAffine(img, M, (nW, nH), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         return cv2.resize(rotated, (w, h), interpolation=cv2.INTER_CUBIC)
     
+    def _update_ai_models(self, hr, diag, roi_vals, ambient_val):
+        """AI 모델들을 업데이트하고 개인화 학습 수행"""
+        try:
+            # 앙상블 학습 모델 업데이트
+            if self.ensemble_optimizer is not None and hr is not None:
+                thermal_features = {
+                    'motion_level': self.motion.motion_level,
+                    'ambient_temp': ambient_val or 25.0
+                }
+                self.ensemble_optimizer.update_model(
+                    diag, self.motion.motion_level, ambient_val or 25.0, hr
+                )
+            
+            # 개인화 모델 업데이트
+            if self.personalized_model is not None and hr is not None:
+                thermal_features = {
+                    'motion_level': self.motion.motion_level,
+                    'ambient_temp': ambient_val or 25.0,
+                    'roi_temps': roi_vals
+                }
+                ambient_conditions = {
+                    'temperature': ambient_val or 25.0,
+                    'motion': self.motion.motion_level
+                }
+                self.personalized_model.update_profile(hr, thermal_features, ambient_conditions)
+                
+            logger.debug("AI models updated successfully")
+            
+        except Exception as e:
+            logger.warning(f"AI model update failed: {e}")
 
     # ---------- main loop ----------
     def run(self):
@@ -1118,6 +1741,9 @@ class ThermalrPPG:
                 if present:
                     if roi_vals:
                         self._append(roi_vals, ambient_val)
+                        # 빠른 측정 모드 시작
+                        if self.fast_mode.is_active and self.fast_mode.measurement_start_time is None:
+                            self.fast_mode.start_measurement()
                 else:
                     self._decay_buffers_on_absent()
 
@@ -1136,6 +1762,9 @@ class ThermalrPPG:
                 if self._enough() and now >= self._hr_next_ts:
                     hr, q, diag = self._compute_hr()
                     self._hr_next_ts = now + self.cfg.hr_period
+                    # 첫 HR 측정 시간 기록
+                    if hr is not None and self.fast_mode.is_active:
+                        self.fast_mode.record_first_hr()
                 if hr is not None:
                     hr = self._smooth_hr(hr)    
 
@@ -1143,12 +1772,34 @@ class ThermalrPPG:
                 if now >= self._rr_next_ts:
                     rr, rrq = self._compute_rr()
                     self._rr_next_ts = now + self.cfg.rr_period
+                    # 첫 RR 측정 시간 기록
+                    if rr is not None and self.fast_mode.is_active:
+                        self.fast_mode.record_first_rr()
 
                 dT_nose, dT_cheek, fh_temp = self._compute_dT(win_sec=5)
 
                 # Label no-face reason for logs/UI
                 if not present and why:
                     art_txt = (art_txt + f"|noface:{why}") if art_txt else f"noface:{why}"
+                    # 얼굴 인식 실패 시 주기적 로깅
+                    if hasattr(self, '_last_face_log_time'):
+                        if time.time() - self._last_face_log_time > 10.0:  # 10초마다 로그
+                            logger.warning(f"얼굴 인식 실패 지속: {why} | bbox={bbox is not None} | present={present}")
+                            self._last_face_log_time = time.time()
+                    else:
+                        self._last_face_log_time = time.time()
+                else:
+                    # 얼굴 인식 성공 시 로깅
+                    if hasattr(self, '_last_face_log_time'):
+                        if time.time() - self._last_face_log_time > 30.0:  # 30초마다 성공 로그
+                            logger.info(f"얼굴 인식 정상: present={present} | bbox={bbox is not None}")
+                            self._last_face_log_time = time.time()
+
+                # AI 모델 업데이트 및 개인화 학습
+                now = time.time()
+                if now - self._last_model_update >= self.cfg.model_update_interval:
+                    self._update_ai_models(hr, diag, roi_vals, ambient_val)
+                    self._last_model_update = now
 
                 # Color recommendation & MQTT (only when present and hr available)
                 color_rec = None
@@ -1208,6 +1859,26 @@ if __name__ == "__main__":
         sr_stride=3,
         mc_stride=2,
         sensor_rotation_deg=135.0,
+        
+        # AI Enhancement features
+        enable_ensemble_learning=True,
+        enable_wavelet_denoising=True,
+        enable_adaptive_filtering=True,
+        enable_personalized_model=True,
+        model_update_interval=300.0,
+        
+        # Raspberry Pi optimization
+        enable_pi_optimization=True,
+        pi_memory_limit_mb=512,
+        pi_cpu_throttle=True,
+        pi_reduced_precision=True,
+        
+        # Fast measurement mode (선택적 활성화)
+        enable_fast_mode=False,  # True로 변경하면 빠른 측정 모드 활성화
+        fast_min_duration=6,
+        fast_hr_period=0.5,
+        fast_present_frames=3,
+        fast_sampling_rate=20.0,
     )
     try:
         mqtt_pub = MqttColorPublisher().connect()

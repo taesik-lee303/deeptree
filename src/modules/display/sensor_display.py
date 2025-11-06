@@ -69,24 +69,48 @@ WAVE_FAST_A = 15.0
 WAVE_FAST_SPEED = 0.25
 WAVE_KS = (0.018, 0.028, 0.042)
 
-# 카드
-CARD_W, CARD_H = 128, 56
-CARD_RADIUS = 14
-CARD_ALPHA = 208
-CARD_SHADOW = (16,48,73,72)
-CARD_STROKE = (255,255,255,80)
-CARD_HILITE = (255,255,255,40)
-DOT_R = 6
+# 카드 - 개선된 크기와 스타일 (겹침 방지를 위해 크기 조정)
+CARD_SIZES = {
+    "primary": (130, 65),    # 주요 센서 (온도, 습도) - 크기 약간 축소
+    "secondary": (110, 55),   # 보조 센서 (소음, PM) - 크기 약간 축소
+    "tertiary": (90, 45)      # 기타 센서 - 크기 약간 축소
+}
+CARD_RADIUS = 16
+CARD_ALPHA = 220
+CARD_SHADOW = (12, 36, 55, 85)
+CARD_STROKE = (255, 255, 255, 100)
+CARD_HILITE = (255, 255, 255, 60)
+DOT_R = 8
 
 # 상단 텍스트 위치 (아래로 이동)
-TOP_TIME_Y = 80
-TOP_DATE_Y = 110
+TOP_TIME_Y = 75
+TOP_DATE_Y = 105
 
-# 색
-COL_BG_RING = (184,194,204)
-COL_WATER   = (230,243,255,215)
-COL_TEXT    = (25,39,52)
-COL_WAIT    = (102,170,204)
+# 개선된 색상 팔레트
+COL_BG_RING = (200, 210, 220)
+COL_WATER = (240, 248, 255, 220)
+COL_TEXT = (20, 30, 40)
+COL_WAIT = (120, 180, 220)
+
+# 센서 우선순위 및 색상
+SENSOR_PRIORITY = {
+    "temperature": 1,
+    "humidity": 1,
+    "noise_level": 2,
+    "pm2_5": 2,
+    "pm10": 3,
+    "motion_detected": 0  # 모션은 별도 처리
+}
+
+# 개선된 색상 시스템
+COLOR_SYSTEM = {
+    "excellent": (80, 227, 194),    # 초록
+    "good": (126, 211, 33),         # 연두
+    "moderate": (255, 194, 62),     # 노랑
+    "poor": (255, 142, 83),         # 주황
+    "hazardous": (208, 2, 27),      # 빨강
+    "neutral": (120, 140, 160)      # 회색
+}
 
 screen = pygame.display.set_mode((SIZE, SIZE))
 pygame.display.set_caption("Smart Circular Display")
@@ -449,135 +473,355 @@ def compute_wave_params(data, wave_offset_local):
 
 # ---------- 그리기 ----------
 def draw_ring(surface):
-    surface.fill((255,255,255))
-    pygame.draw.circle(surface, COL_BG_RING, (CENTER,CENTER), RADIUS-2, 1)
+    """개선된 배경 그리기"""
+    surface.fill((255, 255, 255))
+    
+    # 그라데이션 배경 링
+    for i in range(RADIUS-2, 0, -2):
+        alpha = int(255 * (1 - i / RADIUS) * 0.3)
+        color = (*COL_BG_RING, alpha)
+        temp_surface = pygame.Surface((SIZE, SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(temp_surface, color, (CENTER, CENTER), i, 2)
+        surface.blit(temp_surface, (0, 0))
+    
+    # 메인 링
+    pygame.draw.circle(surface, COL_BG_RING, (CENTER, CENTER), RADIUS-2, 3)
 
 def draw_temp_tint(surface, data):
+    """개선된 온도 배경 틴트"""
     t = data.get("temperature")
-    if t is None: return
-    if t<=18: col=(230,243,255)
-    elif t<=22: col=(232,245,232)
-    elif t<=26: col=(255,244,230)
-    elif t<=30: col=(255,230,204)
+    if t is None: 
+        return
+    
+    # 온도에 따른 그라데이션 색상
+    if t <= 18:
+        col = (230, 243, 255)
+    elif t <= 22:
+        col = (232, 245, 232)
+    elif t <= 26:
+        col = (255, 244, 230)
+    elif t <= 30:
+        col = (255, 230, 204)
     else:
-        intensity = clamp((t-30)/10,0,1)
-        rv=int(255-intensity*50); col=(rv, int(rv*0.4), int(rv*0.4))
-    pygame.draw.circle(surface, col, (CENTER,CENTER), RADIUS-3)
+        intensity = clamp((t-30)/10, 0, 1)
+        rv = int(255 - intensity*50)
+        col = (rv, int(rv*0.4), int(rv*0.4))
+    
+    # 그라데이션 원형 배경
+    for i in range(RADIUS-3, 0, -3):
+        alpha = int(180 * (1 - i / RADIUS))
+        gradient_color = (*col, alpha)
+        temp_surface = pygame.Surface((SIZE, SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(temp_surface, gradient_color, (CENTER, CENTER), i)
+        surface.blit(temp_surface, (0, 0))
 
 def draw_water(surface, wave, data):
-    # 항상 물을 그림 (습도 없으면 기본 수위)
-    radius = wave["radius"]; surf_y=wave["surf_y"]
-    min_x=CENTER-radius; max_x=CENTER+radius
-    steps=220
-    pts=[]
+    """개선된 물결 효과 그리기"""
+    radius = wave["radius"]
+    surf_y = wave["surf_y"]
+    min_x = CENTER - radius
+    max_x = CENTER + radius
+    steps = 300  # 더 부드러운 곡선을 위해 증가
+    
+    # 물 표면 포인트 계산
+    pts = []
     for i in range(steps):
         x = lerp(min_x, max_x, i/(steps-1))
-        y = surf_y(x); pts.append((x,y))
+        y = surf_y(x)
+        pts.append((x, y))
+    
     # 아래쪽 원 경계
-    bottom=[]
-    steps2=150
+    bottom = []
+    steps2 = 200
     for i in range(steps2):
-        ang = math.pi - (i*math.pi/(steps2-1))
-        bx = CENTER + math.cos(ang)*radius
-        by = CENTER + math.sin(ang)*radius
-        if by >= surf_y(bx)-1.0: bottom.append((bx,by))
-    if len(pts)<3 or len(bottom)<3: return
+        ang = math.pi - (i * math.pi / (steps2-1))
+        bx = CENTER + math.cos(ang) * radius
+        by = CENTER + math.sin(ang) * radius
+        if by >= surf_y(bx) - 1.0:
+            bottom.append((bx, by))
+    
+    if len(pts) < 3 or len(bottom) < 3:
+        return
+    
+    # 물 표면 그리기 (그라데이션 효과)
     poly = pts + list(reversed(bottom))
-    layer = pygame.Surface((SIZE,SIZE), pygame.SRCALPHA)
+    layer = pygame.Surface((SIZE, SIZE), pygame.SRCALPHA)
+    
+    # 메인 물 표면
     pygame.draw.polygon(layer, COL_WATER, poly)
-    surface.blit(layer,(0,0))
+    
+    # 물 표면 하이라이트 (빛 반사 효과)
+    if len(pts) > 10:
+        highlight_pts = []
+        for i in range(0, len(pts), 3):  # 일부 포인트만 선택
+            x, y = pts[i]
+            highlight_pts.append((x, y - 2))
+        if len(highlight_pts) > 2:
+            pygame.draw.polygon(layer, (255, 255, 255, 60), highlight_pts)
+    
+    surface.blit(layer, (0, 0))
 
-def color_temp(v):  return (78,205,196) if v<=25 else (255,107,107)
+def get_health_status(value, thresholds):
+    """값에 따른 건강 상태 반환"""
+    if value is None:
+        return "neutral"
+    if value <= thresholds[0]:
+        return "excellent"
+    elif value <= thresholds[1]:
+        return "good"
+    elif value <= thresholds[2]:
+        return "moderate"
+    elif value <= thresholds[3]:
+        return "poor"
+    else:
+        return "hazardous"
+
+def color_temp(v):
+    status = get_health_status(v, [18, 25, 30, 35])
+    return COLOR_SYSTEM[status]
+
 def color_noise(v):
-    if v is None:
-        return (126,211,33)
-    if v <= 55:
-        return (126,211,33)
-    if v <= 70:
-        return (255,194,62)
-    if v <= 85:
-        return (255,142,83)
-    return (208,2,27)
-def color_pm25(v):
-    if v<=15: return (80,227,194)
-    if v<=35: return (245,166,35)
-    return (208,2,27)
-def color_pm10(v):
-    if v<=30: return (80,227,194)
-    if v<=80: return (245,166,35)
-    return (208,2,27)
+    status = get_health_status(v, [40, 55, 70, 85])
+    return COLOR_SYSTEM[status]
 
-def draw_glass_card(surface, rect):
-    x,y,w,h = rect
-    # 원형 카드로 변경 - 중심점과 반지름 계산
+def color_pm25(v):
+    status = get_health_status(v, [15, 35, 75, 150])
+    return COLOR_SYSTEM[status]
+
+def color_pm10(v):
+    status = get_health_status(v, [30, 80, 150, 300])
+    return COLOR_SYSTEM[status]
+
+def color_humidity(v):
+    status = get_health_status(v, [30, 50, 70, 80])
+    return COLOR_SYSTEM[status]
+
+def draw_glass_card(surface, rect, card_type="secondary", pulse_alpha=1.0):
+    """개선된 글래스 카드 그리기"""
+    x, y, w, h = rect
     center_x, center_y = x + w//2, y + h//2
     radius = min(w, h)//2
     
-    # 그림자 (원형)
-    shadow = pygame.Surface((radius*2+12, radius*2+12), pygame.SRCALPHA)
-    pygame.draw.circle(shadow, CARD_SHADOW, (radius+6, radius+6), radius)
-    surface.blit(shadow, (center_x-radius-6, center_y-radius+6))
+    # 카드 타입에 따른 크기 조정
+    size_multiplier = {"primary": 1.1, "secondary": 1.0, "tertiary": 0.9}[card_type]
+    radius = int(radius * size_multiplier)
     
-    # 본체 (원형)
+    # 펄스 효과 (데이터 변화 시)
+    alpha_multiplier = 0.8 + 0.2 * pulse_alpha
+    
+    # 그림자 (원형) - 더 부드러운 그림자
+    shadow_size = radius*2+16
+    shadow = pygame.Surface((shadow_size, shadow_size), pygame.SRCALPHA)
+    shadow_color = (*CARD_SHADOW[:3], int(CARD_SHADOW[3] * alpha_multiplier))
+    pygame.draw.circle(shadow, shadow_color, (radius+8, radius+8), radius)
+    surface.blit(shadow, (center_x-radius-8, center_y-radius+8))
+    
+    # 본체 (원형) - 그라데이션 효과
     body = pygame.Surface((radius*2, radius*2), pygame.SRCALPHA)
-    pygame.draw.circle(body, (255,255,255,CARD_ALPHA), (radius, radius), radius)
+    body_alpha = int(CARD_ALPHA * alpha_multiplier)
+    pygame.draw.circle(body, (255, 255, 255, body_alpha), (radius, radius), radius)
     
-    # 하이라이트 (작은 원형)
-    hi_radius = max(4, radius//4)
-    pygame.draw.circle(body, CARD_HILITE, (radius-radius//3, radius-radius//3), hi_radius)
+    # 하이라이트 (더 자연스러운 그라데이션)
+    hi_radius = max(6, radius//3)
+    hi_alpha = int(CARD_HILITE[3] * alpha_multiplier)
+    pygame.draw.circle(body, (*CARD_HILITE[:3], hi_alpha), 
+                      (radius-radius//3, radius-radius//3), hi_radius)
     
-    # 외곽선 (원형)
-    pygame.draw.circle(body, CARD_STROKE, (radius, radius), radius, width=1)
+    # 외곽선 (원형) - 더 선명한 테두리
+    stroke_alpha = int(CARD_STROKE[3] * alpha_multiplier)
+    pygame.draw.circle(body, (*CARD_STROKE[:3], stroke_alpha), 
+                      (radius, radius), radius, width=2)
     surface.blit(body, (center_x-radius, center_y-radius))
 
 def draw_time_and_date(surface):
+    """개선된 시간/날짜 표시"""
     now = datetime.now()
-    blit_center(surface, font_time.render(now.strftime("%H:%M:%S"), True, COL_TEXT), CENTER, TOP_TIME_Y)
-    blit_center(surface, font_date.render(now.strftime("%m/%d"), True, COL_TEXT), CENTER, TOP_DATE_Y)
+    
+    # 시간 배경 (반투명)
+    time_bg = pygame.Surface((200, 50), pygame.SRCALPHA)
+    pygame.draw.rect(time_bg, (255, 255, 255, 100), (0, 0, 200, 50), border_radius=25)
+    surface.blit(time_bg, (CENTER - 100, TOP_TIME_Y - 25))
+    
+    # 시간 텍스트 (그림자 효과)
+    time_text = now.strftime("%H:%M:%S")
+    time_surf = font_time.render(time_text, True, COL_TEXT)
+    time_shadow = font_time.render(time_text, True, (0, 0, 0, 100))
+    
+    # 그림자 그리기
+    blit_center(surface, time_shadow, CENTER + 2, TOP_TIME_Y + 2)
+    blit_center(surface, time_surf, CENTER, TOP_TIME_Y)
+    
+    # 날짜 텍스트
+    date_text = now.strftime("%Y년 %m월 %d일")
+    date_surf = font_date.render(date_text, True, COL_TEXT)
+    blit_center(surface, date_surf, CENTER, TOP_DATE_Y)
+
+def check_card_collision(rect1, rect2, margin=15):
+    """두 카드 간 충돌 감지 - 마진 증가로 겹침 방지"""
+    return (abs(rect1.centerx - rect2.centerx) < (rect1.width + rect2.width) // 2 + margin and
+            abs(rect1.centery - rect2.centery) < (rect1.height + rect2.height) // 2 + margin)
+
+def optimize_card_positions(items, base_radius=80):
+    """카드 위치 최적화 - 겹침 방지"""
+    num_items = len(items)
+    if num_items == 0:
+        return []
+    
+    # 카드 개수에 따른 동적 반지름 조정
+    if num_items >= 4:
+        # 카드가 많을수록 더 큰 원에 배치
+        base_radius = min(100, 60 + num_items * 8)
+    
+    # 기본 위치 계산
+    if num_items == 1:
+        positions = [(CENTER, CENTER - 60)]
+    elif num_items == 2:
+        positions = [(CENTER - 80, CENTER - 40), (CENTER + 80, CENTER - 40)]
+    elif num_items == 3:
+        positions = [(CENTER - 90, CENTER - 20), (CENTER, CENTER - 60), (CENTER + 90, CENTER - 20)]
+    else:
+        # 4개 이상일 때 원형 배치
+        angle_step = 2 * math.pi / num_items
+        positions = []
+        for i in range(num_items):
+            angle = i * angle_step - math.pi/2  # 12시부터 시작
+            x = CENTER + base_radius * math.cos(angle)
+            y = CENTER + base_radius * math.sin(angle)
+            positions.append((x, y))
+    
+    # 카드 크기 정보 수집
+    card_rects = []
+    for i, (key, value, vcolor, card_type) in enumerate(items):
+        card_w, card_h = CARD_SIZES[card_type]
+        rect = pygame.Rect(0, 0, card_w, card_h)
+        rect.center = positions[i]
+        card_rects.append(rect)
+    
+    # 충돌 해결 알고리즘
+    max_iterations = 50
+    for iteration in range(max_iterations):
+        collision_found = False
+        
+        for i in range(len(card_rects)):
+            for j in range(i + 1, len(card_rects)):
+                if check_card_collision(card_rects[i], card_rects[j]):
+                    collision_found = True
+                    
+                    # 충돌 해결: 두 카드를 서로 멀리 이동
+                    dx = card_rects[i].centerx - card_rects[j].centerx
+                    dy = card_rects[i].centery - card_rects[j].centery
+                    distance = math.sqrt(dx*dx + dy*dy)
+                    
+                    if distance < 1:  # 거의 같은 위치에 있을 때
+                        # 랜덤 방향으로 분리
+                        angle = random.random() * 2 * math.pi
+                        dx = math.cos(angle)
+                        dy = math.sin(angle)
+                        distance = 1
+                    
+                    # 분리 거리 계산 - 더 큰 여유 공간
+                    min_distance = (card_rects[i].width + card_rects[j].width) // 2 + 30
+                    move_distance = (min_distance - distance) / 2
+                    
+                    # 위치 조정
+                    move_x = (dx / distance) * move_distance
+                    move_y = (dy / distance) * move_distance
+                    
+                    # 새 위치 계산
+                    new_x1 = card_rects[i].centerx + move_x
+                    new_y1 = card_rects[i].centery + move_y
+                    new_x2 = card_rects[j].centerx - move_x
+                    new_y2 = card_rects[j].centery - move_y
+                    
+                    # 경계 내로 제한 - 더 엄격한 경계 체크
+                    max_distance = WATER_RADIUS - max(card_rects[i].height, card_rects[j].height) // 2 - 20
+                    for new_x, new_y, rect in [(new_x1, new_y1, card_rects[i]), (new_x2, new_y2, card_rects[j])]:
+                        distance_from_center = math.sqrt((new_x - CENTER)**2 + (new_y - CENTER)**2)
+                        if distance_from_center > max_distance:
+                            angle = math.atan2(new_y - CENTER, new_x - CENTER)
+                            new_x = CENTER + max_distance * math.cos(angle)
+                            new_y = CENTER + max_distance * math.sin(angle)
+                        rect.center = (int(new_x), int(new_y))
+        
+        if not collision_found:
+            break
+    
+    # 최종 위치 반환
+    return [(rect.centerx, rect.centery) for rect in card_rects]
 
 def draw_sensor_cards(surface, data, wave, wave_offset_local):
-    items=[]
-    t  = data.get("temperature");    n = data.get("noise_level")
-    h  = data.get("humidity");       p25= data.get("pm2_5"); p10=data.get("pm10")
-    if t  is not None: items.append(("temp",  f"{t:.1f}°C", color_temp(t)))
-    if n  is not None: items.append(("noise", f"{n:.1f} dB",  color_noise(n)))
-    if h  is not None: items.append(("humi",  f"{h:.0f}%",  (30,144,255)))
-    if p25 is not None:items.append(("pm25",  f"{p25}",     color_pm25(p25)))
-    if p10 is not None:items.append(("pm10",  f"{p10}",     color_pm10(p10)))
+    """개선된 센서 카드 그리기 - 겹침 방지"""
+    items = []
+    t = data.get("temperature")
+    n = data.get("noise_level")
+    h = data.get("humidity")
+    p25 = data.get("pm2_5")
+    p10 = data.get("pm10")
+    
+    # 센서 데이터 수집 (우선순위 순으로)
+    if t is not None: 
+        items.append(("temp", f"{t:.1f}°C", color_temp(t), "primary"))
+    if h is not None: 
+        items.append(("humi", f"{h:.0f}%", color_humidity(h), "primary"))
+    if n is not None: 
+        items.append(("noise", f"{n:.1f} dB", color_noise(n), "secondary"))
+    if p25 is not None: 
+        items.append(("pm25", f"{p25}", color_pm25(p25), "secondary"))
+    if p10 is not None: 
+        items.append(("pm10", f"{p10}", color_pm10(p10), "tertiary"))
 
     if not items:
         blit_center(surface, font_wait.render("센서 데이터 대기중…", True, COL_WAIT), CENTER, CENTER+100)
         return
 
-    left_x  = CENTER - wave["radius"] + 28
-    right_x = CENTER + wave["radius"] - 28
-    xs = [lerp(left_x, right_x, (i+0.5)/len(items)) for i in range(len(items))]
+    # 최적화된 위치 계산
+    positions = optimize_card_positions(items)
 
-    for (key, value, vcolor), x in zip(items, xs):
-        phase = buoy_phases.setdefault(key, random.random()*math.tau)
-        y0 = wave["surf_y"](x)
-        buoyancy = 34
-        bob = math.sin(wave_offset_local*1.2 + phase) * (wave["amplitude"]*0.25 + 1.5)
-        y = y0 - buoyancy + bob
+    for (key, value, vcolor, card_type), (x, y) in zip(items, positions):
+        # 파도 효과 적용
+        phase = buoy_phases.setdefault(key, random.random() * math.tau)
+        wave_y = wave["surf_y"](x) if abs(x - CENTER) < wave["radius"] else y
+        bob = math.sin(wave_offset_local * 1.2 + phase) * (wave["amplitude"] * 0.15 + 1.0)
+        final_y = wave_y - 30 + bob
+        
+        # 카드 크기 결정
+        card_w, card_h = CARD_SIZES[card_type]
+        rect = pygame.Rect(0, 0, card_w, card_h)
+        rect.center = (int(x), int(final_y))
+        
+        # 경계 보정 - 더 엄격한 경계 체크
+        distance_from_center = math.sqrt((x - CENTER)**2 + (final_y - CENTER)**2)
+        max_distance = WATER_RADIUS - card_h//2 - 15  # 여유 공간 증가
+        if distance_from_center > max_distance:
+            # 카드가 원 밖으로 나가지 않도록 조정
+            angle = math.atan2(final_y - CENTER, x - CENTER)
+            x = CENTER + max_distance * math.cos(angle)
+            y = CENTER + max_distance * math.sin(angle)
+            rect.center = (int(x), int(y))
 
-        rect = pygame.Rect(0,0, CARD_W, CARD_H); rect.center=(int(x), int(y))
-        # 경계 보정
-        if (x-CENTER)**2 + (y-CENTER)**2 > (WATER_RADIUS - CARD_H//2 - 4)**2:
-            rect.y -= 6
+        # 펄스 효과 (데이터 변화 감지)
+        pulse_alpha = 0.8 + 0.2 * math.sin(time.time() * 3.0)
+        
+        # 카드 그리기
+        draw_glass_card(surface, rect, card_type, pulse_alpha)
 
-        draw_glass_card(surface, rect)
+        # 상태 표시 점 (더 큰 점)
+        status_dot_r = DOT_R + (2 if card_type == "primary" else 0)
+        pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 15), status_dot_r)
+        
+        # 상태 표시 링 (위험 상태일 때)
+        if vcolor == COLOR_SYSTEM["hazardous"]:
+            pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 15), 
+                             status_dot_r + 3, width=2)
 
-        # 중심점 색점 (원형 카드 중앙 상단)
-        pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery-12), DOT_R)
-
-        # 라벨/값 (원형 카드 중앙에 정렬)
+        # 라벨/값 텍스트
         label_txt = LABELS.get(key, key.upper())
         label_surf = font_label.render(label_txt, True, COL_TEXT)
         value_surf = font_value.render(value, True, vcolor)
         
-        # 라벨과 값을 중앙 정렬
-        blit_center(surface, label_surf, rect.centerx, rect.centery-8)
-        blit_center(surface, value_surf, rect.centerx, rect.centery+10)
+        # 텍스트 중앙 정렬
+        blit_center(surface, label_surf, rect.centerx, rect.centery - 8)
+        blit_center(surface, value_surf, rect.centerx, rect.centery + 12)
 
 # ---------- 메인 루프 ----------
 wave_offset = 0.0

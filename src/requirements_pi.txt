@@ -1,0 +1,29 @@
+# Raspberry Pi 5용 AI Enhancement Dependencies
+# 라즈베리파이5에서 최적화된 패키지 버전들
+
+# 기본 데이터 처리 (라즈베리파이 최적화 버전)
+numpy>=1.21.0,<1.25.0  # 메모리 효율적인 버전
+scipy>=1.7.0,<1.11.0   # 안정적인 버전
+
+# 머신러닝 (경량화)
+scikit-learn>=1.0.0,<1.3.0  # 메모리 사용량 최적화
+
+# 웨이블릿 변환 (선택적)
+PyWavelets>=1.1.0,<1.4.0  # 경량 버전
+
+# 시스템 모니터링
+psutil>=5.8.0
+
+# 선택적 패키지들 (메모리 절약을 위해 필요시만 설치)
+# matplotlib>=3.5.0  # 시각화가 필요한 경우만
+# seaborn>=0.11.0     # 데이터 분석이 필요한 경우만
+
+# 라즈베리파이 최적화를 위한 추가 패키지
+# sudo apt-get install python3-numpy python3-scipy python3-sklearn
+# sudo apt-get install libopenblas-dev liblapack-dev
+# sudo apt-get install python3-pywt  # 웨이블릿 변환용
+
+# 설치 명령어 (라즈베리파이에서)
+# pip install --no-cache-dir -r requirements_pi.txt
+# 또는 개별 설치:
+# pip install numpy==1.24.3 scipy==1.10.1 scikit-learn==1.2.2 PyWavelets==1.3.0 psutil==5.9.0
