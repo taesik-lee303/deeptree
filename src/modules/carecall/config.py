@@ -7,9 +7,8 @@ config.py
 
 import os
 import json
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
-from pathlib import Path
+from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
 
 @dataclass
 class AudioConfig:
@@ -53,6 +52,22 @@ class ServerConfig:
     event_id: int = 1
     user_id: int = 1
 
+
+@dataclass
+class ActivationConfig:
+    """케어콜 시작 조건 설정"""
+    noise_threshold: int = 1000
+    motion_required: bool = True
+    motion_window_sec: float = 5.0
+    sensor_timeout_sec: float = 30.0
+    wake_phrases: List[str] = field(
+        default_factory=lambda: [
+            "케어콜 시작",
+            "케어콜 시작해줘",
+            "케어콜 불러줘",
+        ]
+    )
+
 class Config:
     """통합 설정 클래스"""
     
@@ -65,7 +80,8 @@ class Config:
         self.whisper = WhisperConfig(**self.data.get("whisper", {}))
         self.openai = OpenAIConfig(**self.data.get("openai", {}))
         self.server = ServerConfig(**self.data.get("server", {}))
-        
+        self.activation = ActivationConfig(**self.data.get("activation", {}))
+
         # 환경변수 오버라이드 적용
         self._apply_env_overrides()
     
@@ -120,6 +136,29 @@ class Config:
         # OpenAI 설정
         if os.environ.get("OPENAI_API_KEY"):
             self.openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+        # 활성화 조건 설정
+        if os.environ.get("CARECALL_NOISE_THRESHOLD"):
+            try:
+                self.activation.noise_threshold = int(os.environ["CARECALL_NOISE_THRESHOLD"])
+            except ValueError:
+                pass
+        if os.environ.get("CARECALL_MOTION_REQUIRED"):
+            self.activation.motion_required = os.environ["CARECALL_MOTION_REQUIRED"].strip().lower() not in {"0", "false", "no"}
+        if os.environ.get("CARECALL_MOTION_WINDOW_SEC"):
+            try:
+                self.activation.motion_window_sec = float(os.environ["CARECALL_MOTION_WINDOW_SEC"])
+            except ValueError:
+                pass
+        if os.environ.get("CARECALL_SENSOR_TIMEOUT_SEC"):
+            try:
+                self.activation.sensor_timeout_sec = float(os.environ["CARECALL_SENSOR_TIMEOUT_SEC"])
+            except ValueError:
+                pass
+        if os.environ.get("CARECALL_WAKE_PHRASES"):
+            phrases = [p.strip() for p in os.environ["CARECALL_WAKE_PHRASES"].split(",") if p.strip()]
+            if phrases:
+                self.activation.wake_phrases = phrases
     
     
     def save_config(self, file_path: Optional[str] = None):
@@ -160,6 +199,13 @@ class Config:
                 "dummy_mode": self.server.dummy_mode,
                 "event_id": self.server.event_id,
                 "user_id": self.server.user_id
+            },
+            "activation": {
+                "noise_threshold": self.activation.noise_threshold,
+                "motion_required": self.activation.motion_required,
+                "motion_window_sec": self.activation.motion_window_sec,
+                "sensor_timeout_sec": self.activation.sensor_timeout_sec,
+                "wake_phrases": self.activation.wake_phrases,
             }
         }
         
@@ -197,6 +243,7 @@ def create_sample_config():
     config = Config()
     config.openai.api_key = "YOUR_OPENAI_API_KEY_HERE"
     config.server.base_url = "http://your-ai-server.com/api"
+    config.activation.wake_phrases = ["케어콜 시작", "케어콜 시작해줘","어콜 시작", "어콜 시작해줘","에어콜 시작", "에어콜 시작해줘"]
     config.save_config("config_sample.json")
     print("샘플 설정 파일이 config_sample.json으로 생성되었습니다.")
 

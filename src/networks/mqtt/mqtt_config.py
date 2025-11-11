@@ -18,8 +18,8 @@ class MqttSettings:
     pico_topic: str = os.getenv("MQTT_PICO_TOPIC", "pico/color").strip()
 
     @property
-    def topic_color(self) -> str:
-        return f"{self.topic_base}/color"
+    def topic_total(self) -> str:
+        return f"{self.topic_base}/total"
     @property
     def topic_status(self) -> str:
         return f"{self.topic_base}/status"

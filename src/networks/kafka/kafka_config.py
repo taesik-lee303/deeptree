@@ -55,10 +55,28 @@ class KafkaSettings:
 
     @property
     def kafka_kwargs(self) -> dict:
+        """Consumer용 설정"""
         kwargs: Dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,
             "group_id": self.group_id or None,
             "auto_offset_reset": self.auto_offset_reset,
+            "security_protocol": self.security_protocol,
+        }
+        if self.sasl_username and self.sasl_password:
+            kwargs.update(
+                {
+                    "sasl_mechanism": self.sasl_mechanism or "PLAIN",
+                    "sasl_plain_username": self.sasl_username,
+                    "sasl_plain_password": self.sasl_password,
+                }
+            )
+        return kwargs
+
+    @property
+    def producer_kwargs(self) -> dict:
+        """Producer용 설정 (Consumer 전용 옵션 제외)"""
+        kwargs: Dict[str, Any] = {
+            "bootstrap_servers": self.bootstrap_servers,
             "security_protocol": self.security_protocol,
         }
         if self.sasl_username and self.sasl_password:

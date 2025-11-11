@@ -1,0 +1,857 @@
+2025-09-29 11:26:40,676 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:26:40,677 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:26:40,677 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:26:40,677 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:26:40,677 - MP4Player - WARNING - Video file not found: videos/default.mp4
+2025-09-29 11:26:40,685 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:26:40,685 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:26:40,687 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:26:40,812 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:26:40,812 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:26:40,813 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:26:40,813 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:26:40,819 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:26:40,819 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:26:40,819 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:26:40,820 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:26:40,821 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:26:40,822 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:26:40,823 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:26:40,924 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:26:40,927 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:26:40,927 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:26:40,975 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:26:40,975 - kafka.coordinator.assignors.range - WARNING - No partition metadata for topic carecall.emotion
+2025-09-29 11:26:41,036 - kafka.coordinator - INFO - Successfully joined group example-player with generation 1
+2025-09-29 11:26:41,037 - kafka.consumer.subscription_state - INFO - Updated partition assignment: []
+2025-09-29 11:26:41,038 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions set() for group example-player
+2025-09-29 11:26:41,056 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:26:41,057 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:26:41,064 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:26:41,070 - kafka.coordinator - INFO - Successfully joined group example-player with generation 2
+2025-09-29 11:26:41,070 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:26:41,070 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:26:41,080 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:26:41,080 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:26:41,081 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:27:05,966 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:27:06,079 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:27:06,081 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:27:06,092 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:27:06,093 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:27:06,094 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:27:06,094 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:40:52,569 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:40:52,570 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:40:52,570 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:40:52,570 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:40:52,570 - MP4Player - WARNING - Video file not found: videos/default.mp4
+2025-09-29 11:40:52,573 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:40:52,574 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:40:52,575 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:40:52,680 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:40:52,680 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:40:52,681 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:40:52,682 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:40:52,684 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:40:52,685 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:40:52,685 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:40:52,685 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:40:52,686 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:40:52,688 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:40:52,688 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:40:52,789 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:40:52,792 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:40:52,794 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:40:52,796 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:40:52,798 - kafka.coordinator - INFO - Successfully joined group example-player with generation 4
+2025-09-29 11:40:52,798 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:40:52,798 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:42:34,747 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:42:34,829 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:42:34,830 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:42:34,833 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:42:34,833 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:42:34,834 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:42:34,834 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:42:37,312 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:42:37,312 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:42:37,312 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:42:37,312 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:42:37,312 - MP4Player - WARNING - Video file not found: videos/default.mp4
+2025-09-29 11:42:37,313 - MP4Player - WARNING - Video file not found: videos/excitement.mp4
+2025-09-29 11:42:37,313 - MP4Player - WARNING - Video file not found: videos/calm.mp4
+2025-09-29 11:42:37,313 - MP4Player - WARNING - Video file not found: videos/alarm.mp4
+2025-09-29 11:42:37,316 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:42:37,316 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:42:37,317 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:42:37,425 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:42:37,425 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:42:37,426 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:42:37,427 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:42:37,429 - kafka.cluster - INFO - Group coordinator for custom-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:42:37,429 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group custom-player
+2025-09-29 11:42:37,430 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:42:37,430 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group custom-player
+2025-09-29 11:42:37,431 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:42:37,432 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:42:37,432 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:42:37,533 - kafka.coordinator - INFO - (Re-)joining group custom-player
+2025-09-29 11:42:37,536 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:42:37,540 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:42:37,541 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:42:37,541 - kafka.coordinator - INFO - Successfully joined group custom-player with generation 1
+2025-09-29 11:42:37,541 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:42:37,542 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group custom-player
+2025-09-29 11:42:42,786 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:42:43,171 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:42:43,172 - kafka.coordinator - INFO - Leaving consumer group (custom-player).
+2025-09-29 11:42:43,175 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:42:43,175 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:42:43,176 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:42:45,503 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:42:45,503 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:42:45,504 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:42:45,608 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:42:45,608 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:42:45,615 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:42:45,615 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:42:45,616 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:42:57,617 - kafka.producer.kafka - INFO - Closing the Kafka producer with 9223372036.0 secs timeout.
+2025-09-29 11:42:57,617 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:43:04,247 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:43:04,247 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:43:04,247 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:43:04,247 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:43:04,247 - MP4Player - WARNING - Video file not found: videos/default.mp4
+2025-09-29 11:43:04,251 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:43:04,251 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:43:04,252 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:43:04,356 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:43:04,357 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:43:04,357 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:43:04,358 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:43:04,359 - kafka.cluster - INFO - Group coordinator for monitoring-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:43:04,360 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group monitoring-player
+2025-09-29 11:43:04,360 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:43:04,361 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group monitoring-player
+2025-09-29 11:43:04,361 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:43:04,362 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:43:04,362 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:43:04,463 - kafka.coordinator - INFO - (Re-)joining group monitoring-player
+2025-09-29 11:43:04,467 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:43:04,470 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:43:04,471 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:43:04,471 - kafka.coordinator - INFO - Successfully joined group monitoring-player with generation 1
+2025-09-29 11:43:04,472 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:43:04,472 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group monitoring-player
+2025-09-29 11:43:10,950 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:43:11,002 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:43:11,003 - kafka.coordinator - INFO - Leaving consumer group (monitoring-player).
+2025-09-29 11:43:11,006 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:43:11,007 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:43:11,007 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:44:10,494 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:44:10,494 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:44:10,494 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:44:10,494 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:44:10,495 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:44:10,497 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:44:10,497 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:44:10,498 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:44:10,602 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:44:10,602 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:44:10,602 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:44:10,603 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:44:10,604 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:44:10,605 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:44:10,605 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:44:10,605 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:44:10,606 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:44:10,607 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:44:10,607 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:44:10,707 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:44:10,710 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:44:10,711 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:44:10,714 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:44:10,714 - kafka.coordinator - INFO - Successfully joined group example-player with generation 6
+2025-09-29 11:44:10,715 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:44:10,715 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:44:10,821 - MP4Player - INFO - Selected video: default
+2025-09-29 11:44:10,821 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:44:10,826 - MP4Player - INFO - Selected video: default
+2025-09-29 11:44:10,826 - MP4Player - INFO - Video playback finished
+2025-09-29 11:44:10,827 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:44:10,828 - MP4Player - INFO - Selected video: default
+2025-09-29 11:44:10,828 - MP4Player - INFO - Video playback finished
+2025-09-29 11:44:10,829 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:44:10,829 - MP4Player - INFO - Selected video: default
+2025-09-29 11:44:10,829 - MP4Player - INFO - Video playback finished
+2025-09-29 11:44:10,830 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:44:10,831 - MP4Player - INFO - Selected video: default
+2025-09-29 11:44:10,831 - MP4Player - INFO - Video playback finished
+2025-09-29 11:44:10,832 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:44:10,832 - MP4Player - INFO - Selected video: default
+2025-09-29 11:44:10,832 - MP4Player - INFO - Video playback finished
+2025-09-29 11:44:10,833 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:44:26,832 - MP4Player - INFO - Video playback finished
+2025-09-29 11:44:29,643 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:44:29,863 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:44:29,865 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:44:29,872 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:44:29,872 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:44:29,872 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:44:29,873 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:44:53,810 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:44:53,810 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:44:53,811 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:44:53,811 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:44:53,811 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:44:53,813 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:44:53,814 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:44:53,815 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:44:53,920 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:44:53,921 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:44:53,921 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:44:53,922 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:44:53,924 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:44:53,924 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:44:53,924 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:44:53,925 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:44:53,925 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:44:53,926 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:44:53,926 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:44:54,027 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:44:54,029 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:44:54,030 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:44:54,033 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:44:54,034 - kafka.coordinator - INFO - Successfully joined group example-player with generation 8
+2025-09-29 11:44:54,034 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:44:54,034 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:45:00,467 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:45:00,662 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:45:00,663 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:45:00,665 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:00,666 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:00,666 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:45:15,335 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:45:15,336 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:45:15,336 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:45:15,336 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:45:15,336 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:45:15,338 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:15,339 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:45:15,339 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:15,442 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:45:15,442 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:45:15,443 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:45:15,443 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:45:15,445 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:45:15,445 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:45:15,445 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:45:15,446 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:45:15,446 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:15,447 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:15,447 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:15,548 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:45:15,551 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:45:15,553 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:15,555 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:15,555 - kafka.coordinator - INFO - Successfully joined group example-player with generation 10
+2025-09-29 11:45:15,556 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:45:15,556 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:45:33,029 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:45:33,226 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:45:33,226 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:45:33,229 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:33,229 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:33,229 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:45:36,258 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:45:36,259 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:45:36,259 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:45:36,259 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:45:36,259 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:45:36,263 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:36,263 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:45:36,264 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:36,369 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:45:36,370 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:45:36,370 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:45:36,371 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:45:36,373 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:45:36,373 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:45:36,373 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:45:36,374 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:45:36,374 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:36,375 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:36,376 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:36,476 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:45:36,480 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:45:36,483 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:36,486 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:36,486 - kafka.coordinator - INFO - Successfully joined group example-player with generation 12
+2025-09-29 11:45:36,486 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:45:36,486 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:45:44,752 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:45:45,129 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:45:45,129 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:45:45,139 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:45,142 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:45,143 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:45:52,717 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:45:52,718 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:45:52,718 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:45:52,718 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:45:52,718 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:45:52,720 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:52,720 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:45:52,721 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:52,824 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:45:52,825 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:45:52,825 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:45:52,826 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:45:52,827 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:45:52,827 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:45:52,827 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:45:52,828 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:45:52,828 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:52,829 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:52,829 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:45:52,930 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:45:52,933 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:45:52,934 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:45:52,936 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:45:52,936 - kafka.coordinator - INFO - Successfully joined group example-player with generation 14
+2025-09-29 11:45:52,936 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:45:52,937 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:46:01,087 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:46:01,569 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:46:01,570 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:46:01,573 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:01,573 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:01,574 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:46:21,362 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:46:21,362 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:46:21,362 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:46:21,362 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:46:21,363 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:46:21,365 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:21,365 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:46:21,366 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:21,469 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:46:21,469 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:46:21,469 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:46:21,470 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:46:21,471 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:46:21,472 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:46:21,472 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:46:21,472 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:46:21,473 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:21,473 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:21,474 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:21,574 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:46:21,577 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:46:21,580 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:21,581 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:21,581 - kafka.coordinator - INFO - Successfully joined group example-player with generation 16
+2025-09-29 11:46:21,581 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:46:21,581 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:46:27,965 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:46:28,210 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:46:28,210 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:46:28,213 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:28,214 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:28,214 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:46:30,272 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:46:30,272 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:46:30,272 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:46:30,272 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:46:30,272 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:46:30,275 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:30,275 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:46:30,276 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:30,379 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:46:30,379 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:46:30,380 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:46:30,380 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:46:30,382 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:46:30,382 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:46:30,382 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:46:30,382 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:46:30,383 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:30,385 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:30,385 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:30,486 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:46:30,489 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:46:30,490 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:30,493 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:30,493 - kafka.coordinator - INFO - Successfully joined group example-player with generation 18
+2025-09-29 11:46:30,493 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:46:30,493 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:46:31,447 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:46:31,600 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:46:31,601 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:46:31,603 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:31,603 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:31,604 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:46:33,052 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:46:33,052 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:46:33,052 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:46:33,052 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:46:33,052 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:46:33,053 - MP4Player - WARNING - Video file not found: videos/excitement.mp4
+2025-09-29 11:46:33,053 - MP4Player - WARNING - Video file not found: videos/calm.mp4
+2025-09-29 11:46:33,053 - MP4Player - WARNING - Video file not found: videos/alarm.mp4
+2025-09-29 11:46:33,055 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:33,055 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:46:33,056 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:33,159 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:46:33,159 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:46:33,159 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:46:33,160 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:46:33,161 - kafka.cluster - INFO - Group coordinator for custom-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:46:33,161 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group custom-player
+2025-09-29 11:46:33,161 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:46:33,162 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group custom-player
+2025-09-29 11:46:33,162 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:33,163 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:33,163 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:33,264 - kafka.coordinator - INFO - (Re-)joining group custom-player
+2025-09-29 11:46:33,267 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:46:33,270 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:33,270 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:33,271 - kafka.coordinator - INFO - Successfully joined group custom-player with generation 3
+2025-09-29 11:46:33,271 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:46:33,271 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group custom-player
+2025-09-29 11:46:33,375 - MP4Player - INFO - Selected video: default
+2025-09-29 11:46:33,376 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:46:33,376 - MP4Player - INFO - Selected video: default
+2025-09-29 11:46:33,377 - MP4Player - INFO - Video playback finished
+2025-09-29 11:46:33,378 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:46:33,378 - MP4Player - INFO - Selected video: default
+2025-09-29 11:46:33,379 - MP4Player - INFO - Video playback finished
+2025-09-29 11:46:33,380 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:46:33,380 - MP4Player - INFO - Selected video: default
+2025-09-29 11:46:33,380 - MP4Player - INFO - Video playback finished
+2025-09-29 11:46:33,381 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:46:33,382 - MP4Player - INFO - Selected video: default
+2025-09-29 11:46:33,382 - MP4Player - INFO - Video playback finished
+2025-09-29 11:46:33,383 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:46:33,384 - MP4Player - INFO - Selected video: default
+2025-09-29 11:46:33,384 - MP4Player - INFO - Video playback finished
+2025-09-29 11:46:33,385 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:46:37,166 - MP4Player - INFO - Video playback finished
+2025-09-29 11:46:44,245 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:46:44,405 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:46:44,405 - kafka.coordinator - INFO - Leaving consumer group (custom-player).
+2025-09-29 11:46:44,408 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:44,408 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:44,408 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:46:44,409 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:46:48,297 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:46:48,297 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:46:48,297 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:46:48,297 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:46:48,297 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:46:48,300 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:48,300 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:46:48,300 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:48,403 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:46:48,404 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:46:48,404 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:46:48,405 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:46:48,406 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:46:48,407 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:46:48,407 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:46:48,407 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:46:48,408 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:48,409 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:48,409 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:48,510 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:46:48,513 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:46:48,514 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:48,517 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:48,517 - kafka.coordinator - INFO - Successfully joined group example-player with generation 20
+2025-09-29 11:46:48,517 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:46:48,517 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:46:56,490 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:46:56,650 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:46:56,651 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:46:56,654 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:56,654 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:56,655 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:46:58,776 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:46:58,776 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:46:58,777 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:46:58,777 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:46:58,777 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:46:58,777 - MP4Player - WARNING - Video file not found: videos/excitement.mp4
+2025-09-29 11:46:58,777 - MP4Player - WARNING - Video file not found: videos/calm.mp4
+2025-09-29 11:46:58,778 - MP4Player - WARNING - Video file not found: videos/alarm.mp4
+2025-09-29 11:46:58,780 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:58,780 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:46:58,781 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:58,884 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:46:58,884 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:46:58,884 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:46:58,885 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:46:58,886 - kafka.cluster - INFO - Group coordinator for custom-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:46:58,886 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group custom-player
+2025-09-29 11:46:58,886 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:46:58,887 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group custom-player
+2025-09-29 11:46:58,887 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:58,888 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:58,888 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:46:58,989 - kafka.coordinator - INFO - (Re-)joining group custom-player
+2025-09-29 11:46:58,992 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:46:58,995 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:46:58,996 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:46:58,996 - kafka.coordinator - INFO - Successfully joined group custom-player with generation 5
+2025-09-29 11:46:58,996 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:46:58,996 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group custom-player
+2025-09-29 11:47:09,697 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:47:09,905 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:47:09,905 - kafka.coordinator - INFO - Leaving consumer group (custom-player).
+2025-09-29 11:47:09,908 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:47:09,909 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:47:09,909 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:47:09,910 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:47:12,786 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:47:12,786 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:47:12,787 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:47:12,890 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:47:12,890 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:47:12,896 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:47:12,896 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:47:12,896 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:47:19,563 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:05,847 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:48:05,847 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:48:05,848 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:48:05,848 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:48:05,848 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:48:05,851 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:05,852 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:48:05,853 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:05,958 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:48:05,959 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:48:05,959 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:48:05,960 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:48:05,962 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:48:05,962 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:48:05,962 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:48:05,963 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:48:05,963 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:05,964 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:05,964 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:06,065 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:48:06,068 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:48:06,069 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:06,071 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:06,074 - kafka.coordinator - INFO - Successfully joined group example-player with generation 22
+2025-09-29 11:48:06,074 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:48:06,074 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:48:06,079 - MP4Player - INFO - Selected video: default
+2025-09-29 11:48:06,079 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:48:06,080 - MP4Player - INFO - Selected video: default
+2025-09-29 11:48:06,081 - MP4Player - INFO - Video playback finished
+2025-09-29 11:48:06,082 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:48:06,082 - MP4Player - INFO - Selected video: default
+2025-09-29 11:48:06,083 - MP4Player - INFO - Video playback finished
+2025-09-29 11:48:06,084 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:48:06,084 - MP4Player - INFO - Selected video: default
+2025-09-29 11:48:06,084 - MP4Player - INFO - Video playback finished
+2025-09-29 11:48:06,085 - MP4Player - INFO - Playing video: videos/default.mp4
+2025-09-29 11:48:22,075 - MP4Player - INFO - Video playback finished
+2025-09-29 11:48:28,385 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:48:28,673 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:48:28,673 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:48:28,676 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:28,677 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:28,677 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:48:30,595 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:48:30,595 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:48:30,595 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:48:30,595 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:48:30,595 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:48:30,598 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:30,598 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:48:30,599 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:30,701 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:48:30,702 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:48:30,702 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:48:30,702 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:48:30,704 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:48:30,704 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:48:30,704 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:48:30,704 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:48:30,705 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:30,706 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:30,706 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:30,806 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:48:30,809 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:48:30,811 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:30,814 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:30,814 - kafka.coordinator - INFO - Successfully joined group example-player with generation 24
+2025-09-29 11:48:30,814 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:48:30,814 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:48:34,793 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:48:34,929 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:48:34,929 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:48:34,932 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:34,932 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:34,933 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:48:37,764 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:48:37,764 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:48:37,764 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:48:37,764 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:48:37,764 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:48:37,767 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:37,767 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:48:37,767 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:37,870 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:48:37,871 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:48:37,871 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:48:37,872 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:48:37,873 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:48:37,873 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:48:37,873 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:48:37,874 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:48:37,874 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:37,875 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:37,875 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:37,976 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:48:37,979 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:48:37,980 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:37,982 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:37,983 - kafka.coordinator - INFO - Successfully joined group example-player with generation 26
+2025-09-29 11:48:37,983 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:48:37,983 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:48:42,717 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:48:42,885 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:48:42,886 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:48:42,889 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:42,889 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:42,890 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:48:42,890 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:48:44,838 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:48:44,838 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:48:44,838 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:48:44,839 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:48:44,839 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:48:44,841 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:44,841 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:48:44,842 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:44,946 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:48:44,946 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:48:44,946 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:48:44,947 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:48:44,948 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:48:44,948 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:48:44,949 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:48:44,949 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:48:44,950 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:44,950 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:44,951 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:45,051 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:48:45,054 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:48:45,055 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:45,058 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:45,059 - kafka.coordinator - INFO - Successfully joined group example-player with generation 28
+2025-09-29 11:48:45,059 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:48:45,059 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:48:46,583 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:48:46,953 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:48:46,953 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:48:46,956 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:46,956 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:46,957 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:48:46,957 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:48:48,327 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:48:48,327 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:48:48,327 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:48:48,327 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:48:48,327 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:48:48,330 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:48,330 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:48:48,332 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:48,435 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:48:48,435 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:48:48,435 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:48:48,436 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:48:48,437 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:48:48,438 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:48:48,438 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:48:48,438 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:48:48,439 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:48,440 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:48,440 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:48,541 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:48:48,543 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:48:48,545 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:48,547 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:48,548 - kafka.coordinator - INFO - Successfully joined group example-player with generation 30
+2025-09-29 11:48:48,548 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:48:48,548 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:48:49,538 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:48:49,656 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:48:49,656 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:48:49,659 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:49,659 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:49,660 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:48:50,870 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:48:50,870 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:48:50,870 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:48:50,871 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:48:50,871 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:48:50,873 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:50,873 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:48:50,874 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:50,977 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:48:50,977 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:48:50,977 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:48:50,978 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:48:50,979 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:48:50,979 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:48:50,979 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:48:50,980 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:48:50,980 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:50,981 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:50,981 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:51,081 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:48:51,085 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:48:51,086 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:51,088 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:51,088 - kafka.coordinator - INFO - Successfully joined group example-player with generation 32
+2025-09-29 11:48:51,089 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:48:51,089 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 11:48:51,840 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 11:48:51,983 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 11:48:51,983 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 11:48:51,988 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:51,988 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:51,989 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 11:48:51,989 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 11:48:56,632 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 11:48:56,632 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 11:48:56,632 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 11:48:56,632 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 11:48:56,632 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 11:48:56,635 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:56,635 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 11:48:56,636 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:56,738 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 11:48:56,738 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 11:48:56,739 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 11:48:56,740 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 11:48:56,741 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 11:48:56,741 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 11:48:56,741 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 11:48:56,742 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 11:48:56,742 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:56,743 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:56,743 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 11:48:56,843 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 11:48:56,846 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 11:48:56,847 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 11:48:56,850 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 11:48:56,850 - kafka.coordinator - INFO - Successfully joined group example-player with generation 34
+2025-09-29 11:48:56,850 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 11:48:56,850 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 12:12:45,626 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 12:12:45,626 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 12:12:45,626 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 12:12:45,626 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 12:12:45,627 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 12:12:45,629 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 12:12:45,629 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 12:12:45,630 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 12:12:45,733 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 12:12:45,733 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 12:12:45,734 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 12:12:45,735 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 12:12:45,736 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 12:12:45,736 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 12:12:45,737 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 12:12:45,737 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 12:12:45,738 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 12:12:45,739 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 12:12:45,739 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 12:12:45,839 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 12:12:45,842 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 12:12:45,845 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 12:12:45,847 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 12:12:45,848 - kafka.coordinator - INFO - Successfully joined group example-player with generation 36
+2025-09-29 12:12:45,848 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 12:12:45,848 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 12:12:50,228 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 12:12:50,483 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 12:12:50,484 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 12:12:50,487 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 12:12:50,487 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 12:12:50,488 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 12:12:56,681 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 12:12:56,681 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 12:12:56,681 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 12:12:56,681 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 12:12:56,681 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 12:12:56,684 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 12:12:56,684 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 12:12:56,684 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 12:12:56,787 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 12:12:56,787 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 12:12:56,788 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 12:12:56,788 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 12:12:56,790 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 12:12:56,790 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 12:12:56,790 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 12:12:56,790 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 12:12:56,791 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 12:12:56,792 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 12:12:56,792 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 12:12:56,892 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 12:12:56,895 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 12:12:56,896 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 12:12:56,898 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 12:12:56,899 - kafka.coordinator - INFO - Successfully joined group example-player with generation 38
+2025-09-29 12:12:56,899 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 12:12:56,899 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 12:14:02,240 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 12:14:02,729 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 12:14:02,730 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 12:14:02,732 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 12:14:02,733 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 12:14:02,733 - MP4Player - INFO - MP4 Player stopped
+2025-09-29 13:18:03,049 - MP4Player - WARNING - Video file not found: videos/happy.mp4
+2025-09-29 13:18:03,049 - MP4Player - WARNING - Video file not found: videos/sad.mp4
+2025-09-29 13:18:03,049 - MP4Player - WARNING - Video file not found: videos/angry.mp4
+2025-09-29 13:18:03,049 - MP4Player - WARNING - Video file not found: videos/neutral.mp4
+2025-09-29 13:18:03,049 - MP4Player - INFO - Loaded video config: default -> videos/default.mp4
+2025-09-29 13:18:03,052 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 13:18:03,052 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2025-09-29 13:18:03,053 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 13:18:03,156 - kafka.conn - INFO - Broker version identified as 2.6.0
+2025-09-29 13:18:03,156 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2025-09-29 13:18:03,157 - kafka.consumer.subscription_state - INFO - Updating subscribed topics to: ('carecall.emotion',)
+2025-09-29 13:18:03,157 - MP4Player - INFO - MP4 Player started, listening on topic: carecall.emotion
+2025-09-29 13:18:03,158 - kafka.cluster - INFO - Group coordinator for example-player is BrokerMetadata(nodeId='coordinator-1', host='localhost', port=9092, rack=None)
+2025-09-29 13:18:03,158 - kafka.coordinator - INFO - Discovered coordinator coordinator-1 for group example-player
+2025-09-29 13:18:03,158 - kafka.coordinator - INFO - Starting new heartbeat thread
+2025-09-29 13:18:03,159 - kafka.coordinator.consumer - INFO - Revoking previously assigned partitions set() for group example-player
+2025-09-29 13:18:03,159 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 13:18:03,160 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 13:18:03,160 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 13:18:03,260 - kafka.coordinator - INFO - (Re-)joining group example-player
+2025-09-29 13:18:03,263 - kafka.coordinator - INFO - Elected group leader -- performing partition assignments using range
+2025-09-29 13:18:03,264 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: connecting to localhost:9092 [('::1', 9092, 0, 0) IPv6]
+2025-09-29 13:18:03,266 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv6 ('::1', 9092, 0, 0)]>: Connection complete.
+2025-09-29 13:18:03,268 - kafka.coordinator - INFO - Successfully joined group example-player with generation 40
+2025-09-29 13:18:03,268 - kafka.consumer.subscription_state - INFO - Updated partition assignment: [TopicPartition(topic='carecall.emotion', partition=0)]
+2025-09-29 13:18:03,268 - kafka.coordinator.consumer - INFO - Setting newly assigned partitions {TopicPartition(topic='carecall.emotion', partition=0)} for group example-player
+2025-09-29 13:18:40,017 - MP4Player - INFO - Stopping MP4 Player...
+2025-09-29 13:18:40,219 - kafka.coordinator - INFO - Stopping heartbeat thread
+2025-09-29 13:18:40,220 - kafka.coordinator - INFO - Leaving consumer group (example-player).
+2025-09-29 13:18:40,222 - kafka.conn - INFO - <BrokerConnection node_id=coordinator-1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 13:18:40,223 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>: Closing connection. 
+2025-09-29 13:18:40,223 - kafka.consumer.fetcher - ERROR - Fetch to node 1 failed: Cancelled: <BrokerConnection node_id=1 host=localhost:9092 <connected> [IPv6 ('::1', 9092, 0, 0)]>
+2025-09-29 13:18:40,223 - MP4Player - INFO - MP4 Player stopped

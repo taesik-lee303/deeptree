@@ -1,576 +1,854 @@
-"""Kafka 파이프라인을 통해 수집한 UART 센서 값을 2.1인치 원형 디스플레이에 맞춰 렌더링.
-
-- kafka-python 소비자를 이용해 sensors.uart(기본) 토픽을 지속적으로 구독
-- 메시지 페이로드는 uart_receiver.py와 동일/유사한 스키마(JSON)를 예상
-- Pillow를 이용해 480x480(기본) 원형 레이아웃을 구성하고, 실제 디스플레이 드라이버에 이미지를 전달
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-from __future__ import annotations
+Pygame 버전 (라즈베리파이5 원형 디스플레이):
+- 한글 폰트 자동 탐색 & 없으면 영문 라벨 자동 대체
+- 습도값 없어도 기본 수면 표시 + 물결 애니메이션
+- 센서 키 별칭(alias) 매핑으로 여러 값 동시 표시
+- 상단 시간/날짜, 글래스 카드 스타일
+"""
 
-import argparse
-import json
-import math
-import queue
-import threading
-import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+import os, re, math, json, time, random, threading, subprocess, sys
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+# ---------- 모니터 좌표 탐색 ----------
+def find_monitor_offset(prefer_size=(480,480), fallback=(3840,0)):
+    try:
+        out = subprocess.run(["xrandr","--listmonitors"], capture_output=True, text=True, timeout=3)
+        if out.returncode == 0:
+            for line in out.stdout.splitlines():
+                m = re.search(r"(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)", line)
+                if m:
+                    w,h,x,y = map(int,[m.group(2),m.group(3),m.group(4),m.group(5)])
+                    if (w,h)==prefer_size: return (x,y)
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["xrandr","--query"], capture_output=True, text=True, timeout=3)
+        if out.returncode == 0:
+            for line in out.stdout.splitlines():
+                m = re.search(r"^(\S+)\s+connected\s+(\d+)x(\d+)\+(\d+)\+(\d+)", line)
+                if m:
+                    w,h,x,y = map(int,[m.group(2),m.group(3),m.group(4),m.group(5)])
+                    if (w,h)==prefer_size: return (x,y)
+    except Exception:
+        pass
+    return fallback
+
+pos = find_monitor_offset()
+os.environ["SDL_VIDEO_WINDOW_POS"] = f"{pos[0]},{pos[1]}"
+# Wayland에서 위치 무시되면 필요 시: os.environ["SDL_VIDEODRIVER"] = "x11"
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
 
 try:
-    from src.networks.kafka import KafkaConsumer
-except Exception as exc:  # pragma: no cover
-    KafkaConsumer = None  # type: ignore
-    _KAFKA_IMPORT_ERROR = exc
+    from networks.kafka.kafka_config import settings as kafka_settings
+except Exception as exc:
+    kafka_settings = None
+    _KAFKA_SETTINGS_IMPORT_ERROR = exc
 else:
-    _KAFKA_IMPORT_ERROR = None
+    _KAFKA_SETTINGS_IMPORT_ERROR = None
 
-try:
-    from PIL import Image, ImageDraw, ImageFont
-except Exception as exc:  # pragma: no cover
-    Image = None  # type: ignore
-    ImageDraw = None  # type: ignore
-    ImageFont = None  # type: ignore
-    _PILLOW_IMPORT_ERROR = exc
-else:
-    _PILLOW_IMPORT_ERROR = None
+import pygame
+pygame.init()
 
-from networks.kafka.kafka_config import settings
+# ---------- 설정 ----------
+SIZE = 480
+CENTER = SIZE//2
+RADIUS = CENTER-22
+WATER_RADIUS = CENTER-40
+FPS = 60
 
+# 파도
+WAVE_BASE_A = 4.0
+WAVE_BASE_SPEED = 0.05
+WAVE_FAST_A = 15.0
+WAVE_FAST_SPEED = 0.25
+WAVE_KS = (0.018, 0.028, 0.042)
 
-@dataclass
-class SensorSnapshot:
-    ts: Optional[float] = None
-    device_id: Optional[str] = None
-    temp_c: Optional[float] = None
-    hum: Optional[float] = None
-    noise: Optional[float] = None
-    pir: Optional[int] = None
-    pm1: Optional[float] = None
-    pm25: Optional[float] = None
-    pm10: Optional[float] = None
-    raw: Dict[str, Any] | None = None
-    ingested_at: float = field(default_factory=time.time)
+# 카드 - 개선된 크기와 스타일 (겹침 방지를 위해 크기 조정)
+CARD_SIZES = {
+    "primary": (130, 65),    # 주요 센서 (온도, 습도) - 크기 약간 축소
+    "secondary": (110, 55),   # 보조 센서 (소음, PM) - 크기 약간 축소
+    "tertiary": (90, 45)      # 기타 센서 - 크기 약간 축소
+}
+CARD_RADIUS = 16
+CARD_ALPHA = 220
+CARD_SHADOW = (12, 36, 55, 85)
+CARD_STROKE = (255, 255, 255, 100)
+CARD_HILITE = (255, 255, 255, 60)
+DOT_R = 8
 
-    def has_payload(self) -> bool:
-        return any(
-            value is not None
-            for value in (self.temp_c, self.hum, self.noise, self.pir, self.pm1, self.pm25, self.pm10)
-        )
+# 상단 텍스트 위치 (아래로 이동)
+TOP_TIME_Y = 75
+TOP_DATE_Y = 105
 
+# 개선된 색상 팔레트
+COL_BG_RING = (200, 210, 220)
+COL_WATER = (240, 248, 255, 220)
+COL_TEXT = (20, 30, 40)
+COL_WAIT = (120, 180, 220)
 
-def _pick(d: Dict[str, Any], keys: Iterable[str]) -> Any:
-    for key in keys:
-        if key in d and d[key] is not None:
-            return d[key]
+# 센서 우선순위 및 색상
+SENSOR_PRIORITY = {
+    "temperature": 1,
+    "humidity": 1,
+    "noise_level": 2,
+    "pm2_5": 2,
+    "pm10": 3,
+    "motion_detected": 0  # 모션은 별도 처리
+}
+
+# 개선된 색상 시스템
+COLOR_SYSTEM = {
+    "excellent": (80, 227, 194),    # 초록
+    "good": (126, 211, 33),         # 연두
+    "moderate": (255, 194, 62),     # 노랑
+    "poor": (255, 142, 83),         # 주황
+    "hazardous": (208, 2, 27),      # 빨강
+    "neutral": (120, 140, 160)      # 회색
+}
+
+screen = pygame.display.set_mode((SIZE, SIZE))
+pygame.display.set_caption("Smart Circular Display")
+clock = pygame.time.Clock()
+
+# ---------- 폰트: 한글 자동 탐색 ----------
+def pick_font_path():
+    candidates = [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/unifont/unifont.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for p in candidates:
+        if os.path.exists(p): return p
     return None
 
+FONT_PATH = pick_font_path()
+KR_FONT = FONT_PATH and any(s in FONT_PATH.lower() for s in ["noto", "nanum", "unifont"])
+def make_font(size, bold=False):
+    if FONT_PATH:
+        f = pygame.font.Font(FONT_PATH, size)
+        if bold: f.set_bold(True)
+        return f
+    return pygame.font.SysFont("Arial", size, bold=bold)
 
-def _to_float(value: Any) -> Optional[float]:
+font_time  = make_font(36, True)
+font_date  = make_font(18, True)
+font_label = make_font(14, True)
+font_value = make_font(20, True)
+font_wait  = make_font(18, False)
+
+# 라벨 (항상 한글로 표시)
+LABELS_KR = {"temp":"온도","noise":"소음","humi":"습도","pm25":"PM2.5","pm10":"PM10"}
+LABELS_EN = {"temp":"온도","noise":"소음","humi":"습도","pm25":"PM2.5","pm10":"PM10"}
+LABELS = LABELS_KR
+
+def _env_float(name: str, default: float) -> float:
+    val = os.getenv(name)
+    if val is None or not str(val).strip():
+        return default
+    try:
+        return float(val)
+    except Exception:
+        return default
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in ("1", "true", "t", "yes", "y", "on")
+
+NOISE_SENSOR_ASSUME_DB = _env_bool("NOISE_SENSOR_ASSUME_DB", False)
+NOISE_SENSOR_DB_CUTOFF = _env_float("NOISE_SENSOR_DB_CUTOFF", 180.0)
+NOISE_SENSOR_ADC_BASELINE = max(1e-6, _env_float("NOISE_SENSOR_ADC_BASELINE", 400.0))
+NOISE_SENSOR_DB_BASELINE = _env_float("NOISE_SENSOR_DB_BASELINE", 35.0)
+NOISE_SENSOR_DB_GAIN = _env_float("NOISE_SENSOR_DB_GAIN", 20.0)
+NOISE_SENSOR_DB_MIN = _env_float("NOISE_SENSOR_DB_MIN", 20.0)
+NOISE_SENSOR_DB_MAX = _env_float("NOISE_SENSOR_DB_MAX", 120.0)
+
+def convert_noise_reading(raw: Optional[float]) -> Optional[float]:
+    if raw is None:
+        return None
+    value = float(raw)
+    if NOISE_SENSOR_ASSUME_DB or value <= NOISE_SENSOR_DB_CUTOFF:
+        return value
+    baseline = max(NOISE_SENSOR_ADC_BASELINE, 1e-6)
+    ratio = max(value, 1e-6) / baseline
+    db = NOISE_SENSOR_DB_BASELINE + NOISE_SENSOR_DB_GAIN * math.log10(max(ratio, 1e-6))
+    if NOISE_SENSOR_DB_MIN is not None:
+        db = max(NOISE_SENSOR_DB_MIN, db)
+    if NOISE_SENSOR_DB_MAX is not None:
+        db = min(NOISE_SENSOR_DB_MAX, db)
+    return db
+
+# ---------- 데이터 / Kafka ----------
+sensor_data = {
+    "temperature": None,
+    "humidity": None,
+    "pm2_5": None,
+    "pm10": None,
+    "noise_level": None,
+    "motion_detected": False,
+}
+data_lock = threading.Lock()
+
+DEFAULT_KAFKA_TOPICS = ["display-data", "sensor-events"]
+DEFAULT_BOOTSTRAP_SERVERS = ["localhost:9092"]
+
+try:
+    from kafka import KafkaConsumer  # type: ignore
+except Exception as exc:
+    KafkaConsumer = None  # type: ignore
+    _KAFKA_IMPORT_ERROR = exc
+    KAFKA_ENABLED = False
+else:
+    _KAFKA_IMPORT_ERROR = None
+    KAFKA_ENABLED = True
+
+ALIASES = {
+    "temp":"temperature",
+    "temperature_c":"temperature",
+    "hum":"humidity",
+    "humidity_pct":"humidity",
+    "pm25":"pm2_5",
+    "pm_2_5":"pm2_5",
+    "noise":"noise_level",
+    "sound":"noise_level",
+    "pir":"motion_detected",
+    "pir_alert":"motion_detected",
+    "pir_state":"motion_detected",
+    "motion":"motion_detected",
+    "motion_alert":"motion_detected",
+}
+
+def apply_aliases(d):
+    out = {}
+    for k,v in d.items():
+        key = ALIASES.get(k, k)
+        out[key]=v
+    return out
+
+SENSOR_FIELDS = ("temperature", "humidity", "pm2_5", "pm10", "noise_level", "motion_detected")
+
+def _dedupe(seq):
+    seen = set()
+    ordered = []
+    for item in seq:
+        if not item:
+            continue
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+def resolve_kafka_topics():
+    topics = []
+    env_topics = os.getenv("DISPLAY_SENSOR_TOPICS")
+    if env_topics:
+        topics.extend([t.strip() for t in env_topics.split(",") if t.strip()])
+    if kafka_settings and getattr(kafka_settings, "sensor_topic", None):
+        topics.append(kafka_settings.sensor_topic)
+    if not topics:
+        topics.extend(DEFAULT_KAFKA_TOPICS)
+    return _dedupe(topics)
+
+def resolve_kafka_kwargs():
+    if kafka_settings:
+        return dict(kafka_settings.kafka_kwargs)
+    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", ",".join(DEFAULT_BOOTSTRAP_SERVERS))
+    servers = [item.strip() for item in bootstrap.split(",") if item.strip()]
+    return {
+        "bootstrap_servers": servers or DEFAULT_BOOTSTRAP_SERVERS,
+        "auto_offset_reset": os.getenv("KAFKA_OFFSET_RESET", "latest"),
+    }
+
+def resolve_value_encoding():
+    if kafka_settings and getattr(kafka_settings, "value_encoding", None):
+        return kafka_settings.value_encoding or "utf-8"
+    return os.getenv("KAFKA_VALUE_ENCODING", "utf-8")
+
+def decode_payload(raw: Any, encoding: str):
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode(encoding, errors="ignore")
+        except Exception:
+            return None
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+    return None
+
+def _iter_dict_candidates(obj: Any, depth: int = 0, max_depth: int = 3):
+    if not isinstance(obj, dict):
+        return
+    yield obj
+    if depth >= max_depth:
+        return
+    for value in obj.values():
+        if isinstance(value, dict):
+            yield from _iter_dict_candidates(value, depth + 1, max_depth)
+
+def _to_float(value: Any):
     if value is None:
         return None
-    if isinstance(value, (int, float)) and not math.isnan(value):
+    if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
-        s = value.strip()
+        s = value.strip().replace(",", ".")
         if not s:
             return None
         try:
             return float(s)
-        except ValueError:
-            s = s.replace(",", ".")
-            try:
-                return float(s)
-            except ValueError:
-                return None
-    return None
-
-
-def _to_int01(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return 1 if value else 0
-    if isinstance(value, (int, float)):
-        return 1 if float(value) >= 0.5 else 0
-    if isinstance(value, str):
-        s = value.strip().lower()
-        if s in ("1", "true", "on", "motion", "triggered", "active"):
-            return 1
-        if s in ("0", "false", "off", "clear", "idle", "inactive"):
-            return 0
-    return None
-
-
-def _parse_timestamp(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        ts = float(value)
-        if ts > 1e12:  # 밀리초 방어
-            ts = ts / 1000.0
-        return ts
-    if isinstance(value, str):
-        s = value.strip()
-        if not s:
+        except Exception:
             return None
-        try:
-            return _parse_timestamp(float(s))
-        except ValueError:
-            pass
-        try:
-            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        return dt.replace(tzinfo=dt.tzinfo or timezone.utc).timestamp()
     return None
 
-
-def _extract_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {}
-
-    direct_keys = {key for key in ("temp_c", "hum", "noise", "pir", "pm1", "pm25", "pm10") if key in payload}
-    result = {
-        "ts": payload.get("ts"),
-        "device_id": payload.get("device_id"),
-    }
-    if direct_keys:
-        for key in ("temp_c", "hum", "noise", "pir", "pm1", "pm25", "pm10"):
-            result[key] = payload.get(key)
-        return result
-
-    base = payload.get("sensors") if isinstance(payload.get("sensors"), dict) else payload
-    if not isinstance(base, dict):
-        base = {}
-
-    dht = base.get("dht22") if isinstance(base.get("dht22"), dict) else {}
-    ir = base.get("ir") if isinstance(base.get("ir"), dict) else {}
-    snd = base.get("sound") if isinstance(base.get("sound"), dict) else {}
-    pm = base.get("pm") if isinstance(base.get("pm"), dict) else {}
-
-    result.update(
-        {
-            "temp_c": _pick(dht, ["temp_c", "temperature", "temp", "t"]),
-            "hum": _pick(dht, ["hum", "humidity", "h"]),
-            "noise": _pick(snd, ["noise_raw", "noise", "value", "raw", "level"]),
-            "pir": _pick(ir, ["pir", "motion", "value", "status"])
-            or _pick(base, ["pir", "motion"]),
-            "pm1": _pick(pm, ["pm1", "pm1_0", "pm_1_0"]),
-            "pm25": _pick(pm, ["pm25", "pm2_5", "pm2.5", "pm_2_5"]),
-            "pm10": _pick(pm, ["pm10", "pm_10"]),
-        }
-    )
-    return result
-
-
-def _snapshot_from_payload(payload: Dict[str, Any]) -> SensorSnapshot | None:
-    fields = _extract_fields(payload)
-    if not fields:
-        return None
-    ts = _parse_timestamp(fields.get("ts"))
-    snapshot = SensorSnapshot(
-        ts=ts,
-        device_id=fields.get("device_id") or payload.get("device"),
-        temp_c=_to_float(fields.get("temp_c")),
-        hum=_to_float(fields.get("hum")),
-        noise=_to_float(fields.get("noise")),
-        pir=_to_int01(fields.get("pir")),
-        pm1=_to_float(fields.get("pm1")),
-        pm25=_to_float(fields.get("pm25")),
-        pm10=_to_float(fields.get("pm10")),
-    )
-    return snapshot
-
-
-def _clamp_ratio(value: Optional[float], value_range: tuple[float, float]) -> float:
+def _normalize_sensor_value(key: str, value: Any):
     if value is None:
-        return 0.0
-    low, high = value_range
-    if high <= low:
-        return 0.0
-    return max(0.0, min(1.0, (value - low) / (high - low)))
+        return None
+    if key == "motion_detected":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "t", "yes", "y", "on", "motion", "active", "detected")
+        return None
+    num = _to_float(value)
+    if num is None:
+        return None
+    if key in ("pm2_5", "pm10"):
+        return int(round(num))
+    if key == "noise_level":
+        return convert_noise_reading(num)
+    if key in ("temperature", "humidity"):
+        return float(num)
+    return num
 
+def extract_sensor_values(payload: Dict[str, Any]) -> Dict[str, Any]:
+    updates: Dict[str, Any] = {}
+    for segment in _iter_dict_candidates(payload):
+        alias_segment = apply_aliases(segment)
+        for key in SENSOR_FIELDS:
+            if key in alias_segment and alias_segment[key] is not None:
+                normalized = _normalize_sensor_value(key, alias_segment[key])
+                if normalized is not None:
+                    updates[key] = normalized
+    return updates
 
-def _format_time(ts: Optional[float], fallback: float) -> str:
-    base_ts = ts if ts is not None else fallback
+def kafka_consume():
+    if not KAFKA_ENABLED:
+        reason = f" ({_KAFKA_IMPORT_ERROR})" if "_KAFKA_IMPORT_ERROR" in globals() and _KAFKA_IMPORT_ERROR else ""
+        print("[i] Kafka ??? ?? ? ?? ?? ???? ?????." + reason)
+        return
+
+    topics = resolve_kafka_topics()
+    if not topics:
+        print("[i] Kafka ?? ??? ?? ?? ???? ?????.")
+        return
+
+    if kafka_settings is None and "_KAFKA_SETTINGS_IMPORT_ERROR" in globals() and _KAFKA_SETTINGS_IMPORT_ERROR:
+        print(f"[i] Kafka ?? ?? ??: {_KAFKA_SETTINGS_IMPORT_ERROR}. ????? ?????.")
+
+    encoding = resolve_value_encoding()
+    kwargs = resolve_kafka_kwargs()
+    kwargs = dict(kwargs)
+    kwargs.pop("value_deserializer", None)
+    kwargs.pop("key_deserializer", None)
+    kwargs.setdefault("consumer_timeout_ms", 1000)
+    kwargs.setdefault("enable_auto_commit", True)
+
+    bootstrap = kwargs.get("bootstrap_servers")
+    print(f"[i] Kafka ?? ??: topics={topics}, bootstrap={bootstrap}")
+
     try:
-        dt = datetime.fromtimestamp(base_ts, tz=timezone.utc).astimezone()
-    except (OSError, OverflowError, ValueError):
-        return "--:--:--"
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+        consumer = KafkaConsumer(*topics, value_deserializer=lambda x: x, **kwargs)
+    except Exception as e:
+        print("[!] Kafka ?? ??:", e)
+        return
 
-
-def _format_age(age_seconds: float) -> str:
-    if age_seconds < 60:
-        return f"+{age_seconds:0.1f}s"
-    minutes = int(age_seconds // 60)
-    seconds = int(age_seconds % 60)
-    return f"+{minutes}m{seconds:02d}s"
-
-
-class CircularSensorDisplay:
-    def __init__(
-        self,
-        *,
-        diameter: int,
-        font_path: str | None = None,
-        dump_dir: Path | None = None,
-        driver: Any | None = None,
-    ) -> None:
-        if Image is None or ImageDraw is None or ImageFont is None:
-            raise RuntimeError(f"Pillow import 실패: {_PILLOW_IMPORT_ERROR}")
-        self.diameter = diameter
-        self.center = diameter / 2.0
-        self.driver = driver
-        self.dump_dir = Path(dump_dir) if dump_dir else None
-        if self.dump_dir:
-            self.dump_dir.mkdir(parents=True, exist_ok=True)
-        self.frame_index = 0
-        self.font_big = self._load_font(font_path, 96)
-        self.font_medium = self._load_font(font_path, 48)
-        self.font_small = self._load_font(font_path, 30)
-        self.font_tiny = self._load_font(font_path, 22)
-
-    def _load_font(self, font_path: str | None, size: int) -> ImageFont.ImageFont:
-        candidates = []
-        if font_path:
-            candidates.append(Path(font_path))
-        candidates.extend(
-            Path(p)
-            for p in (
-                "C:/Windows/Fonts/malgun.ttf",
-                "C:/Windows/Fonts/seguiemj.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            )
-        )
-        for candidate in candidates:
-            if candidate.is_file():
-                try:
-                    return ImageFont.truetype(str(candidate), size)
-                except OSError:
-                    continue
-        return ImageFont.load_default()
-
-    @staticmethod
-    def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> tuple[int, int]:
-        if hasattr(draw, "textbbox"):
-            left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
-            return int(right - left), int(bottom - top)
-        return draw.textsize(text, font=font)
-
-    def _draw_text(
-        self,
-        draw: ImageDraw.ImageDraw,
-        text: str,
-        xy: tuple[float, float],
-        font: ImageFont.ImageFont,
-        fill: tuple[int, int, int],
-        align: str = "center",
-    ) -> None:
-        width, height = self._text_size(draw, text, font)
-        if align == "center":
-            pos = (xy[0] - width / 2.0, xy[1] - height / 2.0)
-        elif align == "right":
-            pos = (xy[0] - width, xy[1] - height / 2.0)
-        else:  # left
-            pos = (xy[0], xy[1] - height / 2.0)
-        draw.text(pos, text, font=font, fill=fill)
-
-    def render(self, snapshot: SensorSnapshot) -> Image.Image:
-        img = Image.new("RGB", (self.diameter, self.diameter), color=(6, 10, 18))
-        draw = ImageDraw.Draw(img)
-
-        # 외곽 배경
-        outer_margin = 6
-        draw.ellipse(
-            (
-                outer_margin,
-                outer_margin,
-                self.diameter - outer_margin,
-                self.diameter - outer_margin,
-            ),
-            fill=(16, 24, 42),
-            outline=(70, 90, 140),
-            width=4,
-        )
-        inner_margin = outer_margin + 18
-        draw.ellipse(
-            (
-                inner_margin,
-                inner_margin,
-                self.diameter - inner_margin,
-                self.diameter - inner_margin,
-            ),
-            fill=(8, 12, 24),
-            outline=None,
-        )
-
-        if not snapshot.has_payload():
-            self._draw_waiting(draw)
-            return img
-
-        self._draw_metric_rings(draw, snapshot)
-        self._draw_center_text(draw, snapshot)
-        self._draw_footer(draw, snapshot)
-        return img
-
-    def _draw_waiting(self, draw: ImageDraw.ImageDraw) -> None:
-        self._draw_text(draw, "Waiting for data", (self.center, self.center - 10), self.font_medium, (150, 160, 190))
-        self._draw_text(draw, "Kafka stream idle", (self.center, self.center + 40), self.font_small, (110, 130, 170))
-
-    def _draw_metric_rings(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        ring_thickness = 18
-        gap = 6
-        max_radius = self.diameter / 2.0 - 22
-        specs = [
-            ("TEMP", snapshot.temp_c, (0.0, 40.0), (244, 138, 109)),
-            ("HUM", snapshot.hum, (0.0, 100.0), (120, 200, 255)),
-            ("PM2.5", snapshot.pm25, (0.0, 150.0), (186, 160, 255)),
-        ]
-        for idx, (label, value, value_range, color) in enumerate(specs):
-            radius = max_radius - idx * (ring_thickness + gap)
-            if radius <= ring_thickness / 2:
-                continue
-            bbox = (
-                self.center - radius,
-                self.center - radius,
-                self.center + radius,
-                self.center + radius,
-            )
-            base_color = tuple(max(30, int(c * 0.35)) for c in color)
-            draw.arc(bbox, start=135, end=405, width=ring_thickness, fill=base_color)
-            ratio = _clamp_ratio(value, value_range)
-            if ratio > 0:
-                draw.arc(bbox, start=135, end=135 + 270 * ratio, width=ring_thickness, fill=color)
-            label_y = self.center - radius + ring_thickness / 2.0
-            self._draw_text(draw, label, (self.center, label_y), self.font_tiny, color, align="center")
-
-    def _draw_center_text(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        header = snapshot.device_id or "UART SENSOR"
-        age = max(0.0, time.time() - snapshot.ingested_at)
-        time_text = _format_time(snapshot.ts, snapshot.ingested_at)
-        age_text = _format_age(age)
-
-        self._draw_text(draw, header, (self.center, self.diameter * 0.18), self.font_small, (180, 200, 255))
-        self._draw_text(draw, time_text, (self.center, self.diameter * 0.26), self.font_tiny, (120, 150, 200))
-        self._draw_text(draw, age_text, (self.diameter * 0.82, self.diameter * 0.26), self.font_tiny, (140, 160, 210), align="right")
-
-        if snapshot.temp_c is not None:
-            main_text = f"{snapshot.temp_c:0.1f}°C"
-            main_color = (255, 190, 120)
-        elif snapshot.hum is not None:
-            main_text = f"RH {snapshot.hum:0.0f}%"
-            main_color = (120, 200, 255)
-        else:
-            main_text = "--"
-            main_color = (160, 170, 190)
-        self._draw_text(draw, main_text, (self.center, self.center - 10), self.font_big, main_color)
-
-        secondary_parts = []
-        if snapshot.hum is not None:
-            secondary_parts.append(f"RH {snapshot.hum:0.0f}%")
-        if snapshot.noise is not None:
-            secondary_parts.append(f"Noise {snapshot.noise:0.0f}dB")
-        if not secondary_parts:
-            secondary_parts.append("No secondary metrics")
-        self._draw_text(draw, " | ".join(secondary_parts), (self.center, self.center + 70), self.font_small, (150, 170, 210))
-
-    def _draw_footer(self, draw: ImageDraw.ImageDraw, snapshot: SensorSnapshot) -> None:
-        pm_parts = []
-        if snapshot.pm1 is not None:
-            pm_parts.append(f"PM1 {snapshot.pm1:0.0f}")
-        if snapshot.pm25 is not None:
-            pm_parts.append(f"PM2.5 {snapshot.pm25:0.0f}")
-        if snapshot.pm10 is not None:
-            pm_parts.append(f"PM10 {snapshot.pm10:0.0f}")
-        pm_text = " | ".join(pm_parts) if pm_parts else "PM data --"
-        self._draw_text(draw, pm_text, (self.center, self.diameter * 0.78), self.font_small, (130, 160, 210))
-
-        pir_text: str
-        pir_color: tuple[int, int, int]
-        if snapshot.pir is None:
-            pir_text = "PIR --"
-            pir_color = (120, 130, 150)
-        elif snapshot.pir:
-            pir_text = "MOTION"
-            pir_color = (255, 110, 110)
-        else:
-            pir_text = "IDLE"
-            pir_color = (110, 190, 140)
-        pad_x = 80
-        pad_y = self.diameter * 0.86
-        box = (
-            self.center - pad_x,
-            pad_y - 24,
-            self.center + pad_x,
-            pad_y + 24,
-        )
-        draw.rounded_rectangle(box, radius=24, fill=(pir_color[0], pir_color[1], pir_color[2],), outline=None)
-        self._draw_text(draw, pir_text, (self.center, pad_y), self.font_small, (12, 16, 22))
-
-    def present(self, image: Image.Image) -> None:
-        if self.driver is not None:
-            if hasattr(self.driver, "display"):
-                self.driver.display(image)
-            elif hasattr(self.driver, "image"):
-                self.driver.image(image)
-        if self.dump_dir:
-            frame_path = self.dump_dir / f"frame_{self.frame_index:06d}.png"
-            image.save(frame_path)
-        self.frame_index += 1
-
-
-class KafkaSensorStream:
-    def __init__(self, out_queue: queue.Queue[SensorSnapshot], *, debug: bool = False) -> None:
-        self.out_queue = out_queue
-        self.debug = debug
-        self._stop_evt = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        if KafkaConsumer is None:
-            raise RuntimeError(f"kafka-python import 실패: {_KAFKA_IMPORT_ERROR}")
-        self._stop_evt.clear()
-        self._thread = threading.Thread(target=self._run, name="kafka-sensor-consumer", daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop_evt.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-
-    def _publish(self, snapshot: SensorSnapshot) -> None:
-        try:
-            self.out_queue.put(snapshot, timeout=0.05)
-        except queue.Full:
+    try:
+        while True:
             try:
-                self.out_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self.out_queue.put(snapshot, timeout=0.05)
-            except queue.Full:
-                if self.debug:
-                    print("[Kafka] 출력 큐가 가득 찼습니다.")
-
-    def _run(self) -> None:
-        try:
-            consumer = KafkaConsumer(
-                enable_auto_commit=True,
-                value_deserializer=lambda v: v.decode(settings.value_encoding, "ignore"),
-                **settings.kafka_kwargs,
-            )
-            consumer.subscribe([settings.sensor_topic])
-            if self.debug:
-                print(f"[Kafka] 토픽 구독: {settings.sensor_topic}")
-        except Exception as exc:
-            print(f"[Kafka] 소비자 초기화 실패: {exc}")
-            return
-
-        while not self._stop_evt.is_set():
-            try:
-                records = consumer.poll(timeout_ms=500)
-            except Exception as exc:
-                print(f"[Kafka] poll 실패: {exc}")
+                records = consumer.poll(timeout_ms=1000)
+            except Exception as e:
+                print("[!] Kafka poll ??:", e)
                 time.sleep(1.0)
                 continue
             if not records:
                 continue
-            for messages in records.values():
-                for message in messages:
-                    raw_value = message.value
-                    try:
-                        payload = json.loads(raw_value)
-                    except Exception as exc:
-                        if self.debug:
-                            print(f"[Kafka] JSON 파싱 실패: {exc} :: {raw_value!r}")
+            for batch in records.values():
+                for msg in batch:
+                    payload = decode_payload(msg.value, encoding)
+                    if payload is None:
                         continue
-                    snapshot = _snapshot_from_payload(payload)
-                    if snapshot is None:
-                        if self.debug:
-                            print(f"[Kafka] 지원하지 않는 페이로드: {payload}")
+                    updates = extract_sensor_values(payload)
+                    if not updates:
                         continue
-                    snapshot.raw = payload
-                    snapshot.ingested_at = time.time()
-                    self._publish(snapshot)
+                    with data_lock:
+                        sensor_data.update(updates)
+    finally:
         try:
             consumer.close()
         except Exception:
             pass
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Kafka -> 원형 디스플레이 센서 뷰어")
-    parser.add_argument("--diameter", type=int, default=settings.diameter_pixels, help="디스플레이 지름(px)")
-    parser.add_argument("--font", type=str, default=settings.font_path, help="TTF 폰트 경로")
-    parser.add_argument(
-        "--refresh-hz",
-        type=float,
-        default=settings.display_refresh_hz,
-        help="화면 갱신 주기(Hz)",
-    )
-    parser.add_argument(
-        "--frame-dump",
-        type=str,
-        default=None,
-        help="프레임 이미지를 저장할 디렉터리(테스트용)",
-    )
-    parser.add_argument("--debug", action="store_true", help="디버그 로그 출력")
-    return parser
+def demo_feeder():
+    t0=time.time()
+    force_demo = os.getenv("DISPLAY_DEMO_MODE", "0") == "1"
+    while True:
+        if not force_demo and KAFKA_ENABLED and resolve_kafka_topics():
+            return
+        t=time.time()-t0
+        with data_lock:
+            sensor_data["temperature"]=23.5+2.0*math.sin(t*0.12)
+            sensor_data["humidity"]=48+22*(math.sin(t*0.07)*0.5+0.5)
+            sensor_data["pm2_5"]=int(10+20*(math.sin(t*0.05)*0.5+0.5))
+            sensor_data["pm10"] =int(20+40*(math.sin(t*0.045+1.2)*0.5+0.5))
+            sensor_data["noise_level"]=int(35+25*(math.sin(t*0.35)*0.5+0.5))
+            sensor_data["motion_detected"]=(int(t)%12==0)
+        time.sleep(0.2)
 
+threading.Thread(target=kafka_consume, daemon=True).start()
+threading.Thread(target=demo_feeder,  daemon=True).start()
 
-def main() -> None:
-    if KafkaConsumer is None:
-        raise SystemExit(f"kafka-python import 실패: {_KAFKA_IMPORT_ERROR}")
-    if Image is None or ImageDraw is None or ImageFont is None:
-        raise SystemExit(f"Pillow import 실패: {_PILLOW_IMPORT_ERROR}")
+# ---------- 유틸 ----------
+def clamp(v, lo, hi): return lo if v<lo else hi if v>hi else v
+def lerp(a,b,t): return a+(b-a)*t
+def blit_center(surface, surf, cx, cy):
+    r=surf.get_rect(center=(cx,cy)); surface.blit(surf, r)
 
-    parser = build_arg_parser()
-    args = parser.parse_args()
+# ---------- 파도 / 부표 ----------
+random.seed(42)
+buoy_phases={}
+wave_offset=0.0
+motion_boost_until=0.0
 
-    refresh_hz = args.refresh_hz if args.refresh_hz > 0 else 1.0
-    refresh_period = 1.0 / refresh_hz
+def compute_wave_params(data, wave_offset_local):
+    # 습도 없으면 기본 수위(20%)
+    h = data.get("humidity")
+    if h is None:
+        water_ratio = 0.20
+    else:
+        water_ratio = clamp((h/100.0)*0.82, 0.0, 0.82)
 
-    dump_dir = Path(args.frame_dump) if args.frame_dump else None
-    display = CircularSensorDisplay(
-        diameter=args.diameter,
-        font_path=args.font,
-        dump_dir=dump_dir,
-    )
+    radius = WATER_RADIUS
+    water_height = (radius*2)*water_ratio
+    surface_base = CENTER + radius - water_height
 
-    out_queue: queue.Queue[SensorSnapshot] = queue.Queue(maxsize=16)
-    stream = KafkaSensorStream(out_queue, debug=args.debug)
-    stream.start()
+    if time.time() < motion_boost_until:
+        A = WAVE_FAST_A
+        speed = WAVE_FAST_SPEED
+    else:
+        A = 0.0
+        speed = 0.0
 
-    latest = SensorSnapshot()
-    next_frame = time.time()
+    ks = WAVE_KS
+    def surf_y(x):
+        y=surface_base
+        for i,k in enumerate(ks):
+            w = A*(0.6 if i==0 else 0.27 if i==1 else 0.13)
+            y += math.sin(k*(x-CENTER) + wave_offset_local*(1.0+i*0.35))*w
+        dymax = math.sqrt(max(0.0, radius**2 - (x-CENTER)**2))
+        return clamp(y, CENTER-dymax, CENTER+dymax)
+    return dict(radius=radius, amplitude=A, speed=speed, surf_y=surf_y)
 
-    try:
-        while True:
-            timeout = max(0.0, next_frame - time.time())
-            try:
-                snapshot = out_queue.get(timeout=timeout if timeout > 0 else 0.01)
-                latest = snapshot
-                if args.debug:
-                    print(
-                        f"[Kafka] 업데이트: device={snapshot.device_id} "
-                        f"temp={snapshot.temp_c} hum={snapshot.hum} noise={snapshot.noise}"
-                    )
-            except queue.Empty:
-                pass
+# ---------- 그리기 ----------
+def draw_ring(surface):
+    """개선된 배경 그리기"""
+    surface.fill((255, 255, 255))
+    
+    # 그라데이션 배경 링
+    for i in range(RADIUS-2, 0, -2):
+        alpha = int(255 * (1 - i / RADIUS) * 0.3)
+        color = (*COL_BG_RING, alpha)
+        temp_surface = pygame.Surface((SIZE, SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(temp_surface, color, (CENTER, CENTER), i, 2)
+        surface.blit(temp_surface, (0, 0))
+    
+    # 메인 링
+    pygame.draw.circle(surface, COL_BG_RING, (CENTER, CENTER), RADIUS-2, 3)
 
-            now = time.time()
-            if now >= next_frame:
-                image = display.render(latest)
-                display.present(image)
-                next_frame = now + refresh_period
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stream.stop()
+def draw_temp_tint(surface, data):
+    """개선된 온도 배경 틴트"""
+    t = data.get("temperature")
+    if t is None: 
+        return
+    
+    # 온도에 따른 그라데이션 색상
+    if t <= 18:
+        col = (230, 243, 255)
+    elif t <= 22:
+        col = (232, 245, 232)
+    elif t <= 26:
+        col = (255, 244, 230)
+    elif t <= 30:
+        col = (255, 230, 204)
+    else:
+        intensity = clamp((t-30)/10, 0, 1)
+        rv = int(255 - intensity*50)
+        col = (rv, int(rv*0.4), int(rv*0.4))
+    
+    # 그라데이션 원형 배경
+    for i in range(RADIUS-3, 0, -3):
+        alpha = int(180 * (1 - i / RADIUS))
+        gradient_color = (*col, alpha)
+        temp_surface = pygame.Surface((SIZE, SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(temp_surface, gradient_color, (CENTER, CENTER), i)
+        surface.blit(temp_surface, (0, 0))
 
+def draw_water(surface, wave, data):
+    """개선된 물결 효과 그리기"""
+    radius = wave["radius"]
+    surf_y = wave["surf_y"]
+    min_x = CENTER - radius
+    max_x = CENTER + radius
+    steps = 300  # 더 부드러운 곡선을 위해 증가
+    
+    # 물 표면 포인트 계산
+    pts = []
+    for i in range(steps):
+        x = lerp(min_x, max_x, i/(steps-1))
+        y = surf_y(x)
+        pts.append((x, y))
+    
+    # 아래쪽 원 경계
+    bottom = []
+    steps2 = 200
+    for i in range(steps2):
+        ang = math.pi - (i * math.pi / (steps2-1))
+        bx = CENTER + math.cos(ang) * radius
+        by = CENTER + math.sin(ang) * radius
+        if by >= surf_y(bx) - 1.0:
+            bottom.append((bx, by))
+    
+    if len(pts) < 3 or len(bottom) < 3:
+        return
+    
+    # 물 표면 그리기 (그라데이션 효과)
+    poly = pts + list(reversed(bottom))
+    layer = pygame.Surface((SIZE, SIZE), pygame.SRCALPHA)
+    
+    # 메인 물 표면
+    pygame.draw.polygon(layer, COL_WATER, poly)
+    
+    # 물 표면 하이라이트 (빛 반사 효과)
+    if len(pts) > 10:
+        highlight_pts = []
+        for i in range(0, len(pts), 3):  # 일부 포인트만 선택
+            x, y = pts[i]
+            highlight_pts.append((x, y - 2))
+        if len(highlight_pts) > 2:
+            pygame.draw.polygon(layer, (255, 255, 255, 60), highlight_pts)
+    
+    surface.blit(layer, (0, 0))
 
-if __name__ == "__main__":
-    main()
+def get_health_status(value, thresholds):
+    """값에 따른 건강 상태 반환"""
+    if value is None:
+        return "neutral"
+    if value <= thresholds[0]:
+        return "excellent"
+    elif value <= thresholds[1]:
+        return "good"
+    elif value <= thresholds[2]:
+        return "moderate"
+    elif value <= thresholds[3]:
+        return "poor"
+    else:
+        return "hazardous"
+
+def color_temp(v):
+    status = get_health_status(v, [18, 25, 30, 35])
+    return COLOR_SYSTEM[status]
+
+def color_noise(v):
+    status = get_health_status(v, [40, 55, 70, 85])
+    return COLOR_SYSTEM[status]
+
+def color_pm25(v):
+    status = get_health_status(v, [15, 35, 75, 150])
+    return COLOR_SYSTEM[status]
+
+def color_pm10(v):
+    status = get_health_status(v, [30, 80, 150, 300])
+    return COLOR_SYSTEM[status]
+
+def color_humidity(v):
+    status = get_health_status(v, [30, 50, 70, 80])
+    return COLOR_SYSTEM[status]
+
+def draw_glass_card(surface, rect, card_type="secondary", pulse_alpha=1.0):
+    """개선된 글래스 카드 그리기"""
+    x, y, w, h = rect
+    center_x, center_y = x + w//2, y + h//2
+    radius = min(w, h)//2
+    
+    # 카드 타입에 따른 크기 조정
+    size_multiplier = {"primary": 1.1, "secondary": 1.0, "tertiary": 0.9}[card_type]
+    radius = int(radius * size_multiplier)
+    
+    # 펄스 효과 (데이터 변화 시)
+    alpha_multiplier = 0.8 + 0.2 * pulse_alpha
+    
+    # 그림자 (원형) - 더 부드러운 그림자
+    shadow_size = radius*2+16
+    shadow = pygame.Surface((shadow_size, shadow_size), pygame.SRCALPHA)
+    shadow_color = (*CARD_SHADOW[:3], int(CARD_SHADOW[3] * alpha_multiplier))
+    pygame.draw.circle(shadow, shadow_color, (radius+8, radius+8), radius)
+    surface.blit(shadow, (center_x-radius-8, center_y-radius+8))
+    
+    # 본체 (원형) - 그라데이션 효과
+    body = pygame.Surface((radius*2, radius*2), pygame.SRCALPHA)
+    body_alpha = int(CARD_ALPHA * alpha_multiplier)
+    pygame.draw.circle(body, (255, 255, 255, body_alpha), (radius, radius), radius)
+    
+    # 하이라이트 (더 자연스러운 그라데이션)
+    hi_radius = max(6, radius//3)
+    hi_alpha = int(CARD_HILITE[3] * alpha_multiplier)
+    pygame.draw.circle(body, (*CARD_HILITE[:3], hi_alpha), 
+                      (radius-radius//3, radius-radius//3), hi_radius)
+    
+    # 외곽선 (원형) - 더 선명한 테두리
+    stroke_alpha = int(CARD_STROKE[3] * alpha_multiplier)
+    pygame.draw.circle(body, (*CARD_STROKE[:3], stroke_alpha), 
+                      (radius, radius), radius, width=2)
+    surface.blit(body, (center_x-radius, center_y-radius))
+
+def draw_time_and_date(surface):
+    """개선된 시간/날짜 표시"""
+    now = datetime.now()
+    
+    # 시간 배경 (반투명)
+    time_bg = pygame.Surface((200, 50), pygame.SRCALPHA)
+    pygame.draw.rect(time_bg, (255, 255, 255, 100), (0, 0, 200, 50), border_radius=25)
+    surface.blit(time_bg, (CENTER - 100, TOP_TIME_Y - 25))
+    
+    # 시간 텍스트 (그림자 효과)
+    time_text = now.strftime("%H:%M:%S")
+    time_surf = font_time.render(time_text, True, COL_TEXT)
+    time_shadow = font_time.render(time_text, True, (0, 0, 0, 100))
+    
+    # 그림자 그리기
+    blit_center(surface, time_shadow, CENTER + 2, TOP_TIME_Y + 2)
+    blit_center(surface, time_surf, CENTER, TOP_TIME_Y)
+    
+    # 날짜 텍스트
+    date_text = now.strftime("%Y년 %m월 %d일")
+    date_surf = font_date.render(date_text, True, COL_TEXT)
+    blit_center(surface, date_surf, CENTER, TOP_DATE_Y)
+
+def check_card_collision(rect1, rect2, margin=15):
+    """두 카드 간 충돌 감지 - 마진 증가로 겹침 방지"""
+    return (abs(rect1.centerx - rect2.centerx) < (rect1.width + rect2.width) // 2 + margin and
+            abs(rect1.centery - rect2.centery) < (rect1.height + rect2.height) // 2 + margin)
+
+def optimize_card_positions(items, base_radius=80):
+    """카드 위치 최적화 - 겹침 방지"""
+    num_items = len(items)
+    if num_items == 0:
+        return []
+    
+    # 카드 개수에 따른 동적 반지름 조정
+    if num_items >= 4:
+        # 카드가 많을수록 더 큰 원에 배치
+        base_radius = min(100, 60 + num_items * 8)
+    
+    # 기본 위치 계산
+    if num_items == 1:
+        positions = [(CENTER, CENTER - 60)]
+    elif num_items == 2:
+        positions = [(CENTER - 80, CENTER - 40), (CENTER + 80, CENTER - 40)]
+    elif num_items == 3:
+        positions = [(CENTER - 90, CENTER - 20), (CENTER, CENTER - 60), (CENTER + 90, CENTER - 20)]
+    else:
+        # 4개 이상일 때 원형 배치
+        angle_step = 2 * math.pi / num_items
+        positions = []
+        for i in range(num_items):
+            angle = i * angle_step - math.pi/2  # 12시부터 시작
+            x = CENTER + base_radius * math.cos(angle)
+            y = CENTER + base_radius * math.sin(angle)
+            positions.append((x, y))
+    
+    # 카드 크기 정보 수집
+    card_rects = []
+    for i, (key, value, vcolor, card_type) in enumerate(items):
+        card_w, card_h = CARD_SIZES[card_type]
+        rect = pygame.Rect(0, 0, card_w, card_h)
+        rect.center = positions[i]
+        card_rects.append(rect)
+    
+    # 충돌 해결 알고리즘
+    max_iterations = 50
+    for iteration in range(max_iterations):
+        collision_found = False
+        
+        for i in range(len(card_rects)):
+            for j in range(i + 1, len(card_rects)):
+                if check_card_collision(card_rects[i], card_rects[j]):
+                    collision_found = True
+                    
+                    # 충돌 해결: 두 카드를 서로 멀리 이동
+                    dx = card_rects[i].centerx - card_rects[j].centerx
+                    dy = card_rects[i].centery - card_rects[j].centery
+                    distance = math.sqrt(dx*dx + dy*dy)
+                    
+                    if distance < 1:  # 거의 같은 위치에 있을 때
+                        # 랜덤 방향으로 분리
+                        angle = random.random() * 2 * math.pi
+                        dx = math.cos(angle)
+                        dy = math.sin(angle)
+                        distance = 1
+                    
+                    # 분리 거리 계산 - 더 큰 여유 공간
+                    min_distance = (card_rects[i].width + card_rects[j].width) // 2 + 30
+                    move_distance = (min_distance - distance) / 2
+                    
+                    # 위치 조정
+                    move_x = (dx / distance) * move_distance
+                    move_y = (dy / distance) * move_distance
+                    
+                    # 새 위치 계산
+                    new_x1 = card_rects[i].centerx + move_x
+                    new_y1 = card_rects[i].centery + move_y
+                    new_x2 = card_rects[j].centerx - move_x
+                    new_y2 = card_rects[j].centery - move_y
+                    
+                    # 경계 내로 제한 - 더 엄격한 경계 체크
+                    max_distance = WATER_RADIUS - max(card_rects[i].height, card_rects[j].height) // 2 - 20
+                    for new_x, new_y, rect in [(new_x1, new_y1, card_rects[i]), (new_x2, new_y2, card_rects[j])]:
+                        distance_from_center = math.sqrt((new_x - CENTER)**2 + (new_y - CENTER)**2)
+                        if distance_from_center > max_distance:
+                            angle = math.atan2(new_y - CENTER, new_x - CENTER)
+                            new_x = CENTER + max_distance * math.cos(angle)
+                            new_y = CENTER + max_distance * math.sin(angle)
+                        rect.center = (int(new_x), int(new_y))
+        
+        if not collision_found:
+            break
+    
+    # 최종 위치 반환
+    return [(rect.centerx, rect.centery) for rect in card_rects]
+
+def draw_sensor_cards(surface, data, wave, wave_offset_local):
+    """개선된 센서 카드 그리기 - 겹침 방지"""
+    items = []
+    t = data.get("temperature")
+    n = data.get("noise_level")
+    h = data.get("humidity")
+    p25 = data.get("pm2_5")
+    p10 = data.get("pm10")
+    
+    # 센서 데이터 수집 (우선순위 순으로)
+    if t is not None: 
+        items.append(("temp", f"{t:.1f}°C", color_temp(t), "primary"))
+    if h is not None: 
+        items.append(("humi", f"{h:.0f}%", color_humidity(h), "primary"))
+    if n is not None: 
+        items.append(("noise", f"{n:.1f} dB", color_noise(n), "secondary"))
+    if p25 is not None: 
+        items.append(("pm25", f"{p25}", color_pm25(p25), "secondary"))
+    if p10 is not None: 
+        items.append(("pm10", f"{p10}", color_pm10(p10), "tertiary"))
+
+    if not items:
+        blit_center(surface, font_wait.render("센서 데이터 대기중…", True, COL_WAIT), CENTER, CENTER+100)
+        return
+
+    # 최적화된 위치 계산
+    positions = optimize_card_positions(items)
+
+    for (key, value, vcolor, card_type), (x, y) in zip(items, positions):
+        # 파도 효과 적용
+        phase = buoy_phases.setdefault(key, random.random() * math.tau)
+        wave_y = wave["surf_y"](x) if abs(x - CENTER) < wave["radius"] else y
+        bob = math.sin(wave_offset_local * 1.2 + phase) * (wave["amplitude"] * 0.15 + 1.0)
+        final_y = wave_y - 30 + bob
+        
+        # 카드 크기 결정
+        card_w, card_h = CARD_SIZES[card_type]
+        rect = pygame.Rect(0, 0, card_w, card_h)
+        rect.center = (int(x), int(final_y))
+        
+        # 경계 보정 - 더 엄격한 경계 체크
+        distance_from_center = math.sqrt((x - CENTER)**2 + (final_y - CENTER)**2)
+        max_distance = WATER_RADIUS - card_h//2 - 15  # 여유 공간 증가
+        if distance_from_center > max_distance:
+            # 카드가 원 밖으로 나가지 않도록 조정
+            angle = math.atan2(final_y - CENTER, x - CENTER)
+            x = CENTER + max_distance * math.cos(angle)
+            y = CENTER + max_distance * math.sin(angle)
+            rect.center = (int(x), int(y))
+
+        # 펄스 효과 (데이터 변화 감지)
+        pulse_alpha = 0.8 + 0.2 * math.sin(time.time() * 3.0)
+        
+        # 카드 그리기
+        draw_glass_card(surface, rect, card_type, pulse_alpha)
+
+        # 상태 표시 점 (더 큰 점)
+        status_dot_r = DOT_R + (2 if card_type == "primary" else 0)
+        pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 15), status_dot_r)
+        
+        # 상태 표시 링 (위험 상태일 때)
+        if vcolor == COLOR_SYSTEM["hazardous"]:
+            pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 15), 
+                             status_dot_r + 3, width=2)
+
+        # 라벨/값 텍스트
+        label_txt = LABELS.get(key, key.upper())
+        label_surf = font_label.render(label_txt, True, COL_TEXT)
+        value_surf = font_value.render(value, True, vcolor)
+        
+        # 텍스트 중앙 정렬
+        blit_center(surface, label_surf, rect.centerx, rect.centery - 8)
+        blit_center(surface, value_surf, rect.centerx, rect.centery + 12)
+
+# ---------- 메인 루프 ----------
+wave_offset = 0.0
+running=True
+while running:
+    dt = clock.tick(FPS)/1000.0
+    for ev in pygame.event.get():
+        if ev.type==pygame.QUIT or (ev.type==pygame.KEYDOWN and ev.key==pygame.K_ESCAPE):
+            running=False
+
+    with data_lock:
+        data = dict(sensor_data)
+
+    # 모션 부스트
+    if data.get("motion_detected"):
+        motion_boost_until = max(motion_boost_until, time.time()+3.0)
+
+    wave = compute_wave_params(data, wave_offset)
+    wave_offset += wave["speed"]
+
+    # 그리기
+    draw_ring(screen)
+    draw_temp_tint(screen, data)
+    draw_water(screen, wave, data)   # ← 데이터 기반 (기본 수위 포함)
+    draw_time_and_date(screen)
+    draw_sensor_cards(screen, data, wave, wave_offset)
+
+    pygame.display.flip()
+
+pygame.quit()

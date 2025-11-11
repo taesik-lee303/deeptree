@@ -18,9 +18,14 @@ def to_int01(v):
         return 1 if v else 0
     if isinstance(v, str):
         s = v.strip().lower()
-        if s in ("1", "true", "on", "motion", "triggered", "active"):
+        s_compact = "".join(ch for ch in s if ch.isalnum())
+        if s in ("1", "true", "on", "motion", "triggered", "active", "object detected", "detected"):
             return 1
-        if s in ("0", "false", "off", "clear", "idle", "inactive"):
+        if s in ("0", "false", "off", "clear", "idle", "inactive", "object not detected", "no object", "absent"):
+            return 0
+        if s_compact in ("1", "true", "on", "motion", "triggered", "active", "objectdetected", "detected"):
+            return 1
+        if s_compact in ("0", "false", "off", "clear", "idle", "inactive", "objectnotdetected", "noobject", "absent"):
             return 0
     return None
 
@@ -50,7 +55,7 @@ def extract_fields(data):
     hum  = pick(dht, ["hum", "humidity", "h"])
 
     # 소음 후보 키
-    noise = pick(snd, ["noise_raw", "noise", "value", "raw", "level"])
+    noise = pick(snd, ["noise_raw", "noise", "value", "raw", "level", "noise_level"])
 
     # IR/PIR 후보 키 (문자/불리언/숫자 모두 받아서 0/1로 정규화)
     pir = None

@@ -12,12 +12,15 @@ import time
 import argparse
 import signal
 import threading
-from typing import Optional
+import queue
+import unicodedata
+from typing import Optional, Set
 
 # 현재 디렉토리를 Python 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules.carecall.config import get_config, create_sample_config
+from modules.carecall.activation import ActivationEvent, SensorTriggerWatcher
 from modules.carecall.stt_tts.utils import setup_logging, get_logger, test_system, AudioUtils
 from modules.carecall.stt_tts.stt import create_stt_manager
 from modules.carecall.stt_tts.tts import create_tts_manager
@@ -30,27 +33,35 @@ class DeepCareSystem:
         # 설정 로드
         if config_file:
             os.environ['DEEPCARE_CONFIG'] = config_file
-        
+
         self.config = get_config()
-        
+        self.activation_cfg = self.config.activation
+
         # 로깅 설정
         setup_logging(level="INFO")
         self.logger = get_logger(self.__class__.__name__)
-        
+
         # 컴포넌트들
         self.stt_manager = None
         self.tts_manager = None
         self.ai_client = None
         self.conversation_manager = None
-        
+
         # 상태
         self.is_running = False
         self.shutdown_event = threading.Event()
-        
+        self._last_activation_event: ActivationEvent | None = None
+        self._wake_phrases_norm: Set[str] = {
+            self._normalize_text(p)
+            for p in (self.activation_cfg.wake_phrases or [])
+            if self._normalize_text(p)
+        }
+        self._last_voice_trigger_ts: float = 0.0
+
         # 신호 핸들러 설정
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-        
+
         self.logger.info("DeepCare System initialized")
     
     def _signal_handler(self, signum, frame):
@@ -91,26 +102,128 @@ class DeepCareSystem:
     def run_interactive_mode(self):
         """대화형 모드 실행"""
         self.logger.info("Starting interactive conversation mode...")
-        
+
         try:
+            if not self.wait_for_activation():
+                self.logger.info("Activation wait aborted")
+                return
+
             self.is_running = True
             self.conversation_manager.start_conversation()
-            
+
             # 메인 루프
             while self.is_running and not self.shutdown_event.is_set():
                 time.sleep(0.1)
-                
+
         except KeyboardInterrupt:
             self.logger.info("Interactive mode interrupted by user")
         except Exception as e:
             self.logger.error(f"Interactive mode error: {e}")
         finally:
             self.conversation_manager.stop_conversation()
-    
+
+    def wait_for_activation(self) -> bool:
+        """센서/호출어 기반으로 케어콜 시작 조건을 대기."""
+        # 활성화 조건이 비어 있다면 바로 통과
+        if self.activation_cfg.noise_threshold <= 0 and not self._wake_phrases_norm:
+            self.logger.info("Activation gating disabled; starting immediately")
+            return True
+
+        activation_queue: queue.Queue[ActivationEvent] = queue.Queue(maxsize=1)
+
+        def _push_event(event: ActivationEvent) -> None:
+            try:
+                activation_queue.put_nowait(event)
+            except queue.Full:
+                pass
+
+        watcher = SensorTriggerWatcher(self.activation_cfg, _push_event)
+        watcher_active = watcher.start()
+
+        voice_enabled = bool(self._wake_phrases_norm)
+        stt_started = False
+
+        if voice_enabled and self.stt_manager:
+            def _on_transcribed(text: str) -> None:
+                normalized = self._normalize_text(text)
+                if not normalized:
+                    return
+                if self._is_wake_phrase(normalized):
+                    now = time.time()
+                    if self.activation_cfg.sensor_timeout_sec > 0 and (now - self._last_voice_trigger_ts) < self.activation_cfg.sensor_timeout_sec:
+                        return
+                    self._last_voice_trigger_ts = now
+                    self.logger.info("Wake phrase detected: %s", text)
+                    _push_event(ActivationEvent(source="voice", payload={"text": text}))
+
+            try:
+                self.stt_manager.start(on_transcribed=_on_transcribed)
+                stt_started = True
+                self.logger.info(
+                    "Waiting for wake phrases: %s",
+                    ", ".join(sorted(self.activation_cfg.wake_phrases or [])) or "(none)"
+                )
+            except Exception as exc:
+                voice_enabled = False
+                self.logger.error("Failed to start STT for wake phrase detection: %s", exc)
+
+        if not watcher_active:
+            self.logger.warning("Sensor trigger watcher inactive; relying on voice wake-up only")
+        else:
+            self.logger.info(
+                "Sensor trigger armed (noise ≥ %s, motion window %ss)",
+                self.activation_cfg.noise_threshold,
+                self.activation_cfg.motion_window_sec,
+            )
+
+        if not watcher_active and not voice_enabled:
+            self.logger.warning("No activation mechanism available; starting immediately")
+            return True
+
+        triggered: ActivationEvent | None = None
+
+        try:
+            while not self.shutdown_event.is_set():
+                try:
+                    triggered = activation_queue.get(timeout=0.5)
+                    break
+                except queue.Empty:
+                    continue
+        finally:
+            if watcher_active:
+                watcher.stop()
+            if stt_started:
+                self.stt_manager.stop()
+
+        if triggered is None:
+            return False
+
+        self._last_activation_event = triggered
+        self.logger.info("Activation satisfied by %s", triggered.source)
+        return True
+
+    def _normalize_text(self, text: str) -> str:
+        s = unicodedata.normalize("NFKC", (text or "")).lower()
+        return "".join(
+            ch for ch in s if unicodedata.category(ch)[0] not in {"Z", "P"}
+        )
+
+    def _is_wake_phrase(self, normalized: str) -> bool:
+        if not normalized:
+            return False
+        if normalized in self._wake_phrases_norm:
+            return True
+        # 부분 포함(호출어가 긴 문장 속에 포함된 경우) 체크
+        if any(phrase in normalized for phrase in self._wake_phrases_norm):
+            return True
+        if "시작" in normalized:
+            return True
+        return False
+
     def run_stt_only(self):
         """STT만 실행"""
         self.logger.info("Starting STT-only mode...")
-        
+
         def on_transcribed(text):
             print(f"[STT] {text}")
         
@@ -281,7 +394,13 @@ def main():
         # 모드별 실행
         if args.mode == 'interactive':
             print("=== 대화형 모드 시작 ===")
-            print("말씀해 주세요. 'Ctrl+C'로 종료할 수 있습니다.")
+            wake_info = ", ".join(system.activation_cfg.wake_phrases or []) or "(호출어 미설정)"
+            print(
+                "소음 ≥ {threshold} & PIR 감지 또는 호출어 [{phrases}] 인식 시 케어콜이 시작됩니다.\n'Ctrl+C'로 종료할 수 있습니다.".format(
+                    threshold=system.activation_cfg.noise_threshold,
+                    phrases=wake_info,
+                )
+            )
             system.run_interactive_mode()
             
         elif args.mode == 'stt-only':

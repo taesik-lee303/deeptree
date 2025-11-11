@@ -52,20 +52,24 @@ class UartKafkaProducer:
         self.settings = producer_settings
         self.debug = debug
 
+        print(f"[Producer] Kafka 연결 시도 중... {settings.bootstrap_servers}")
         try:
             self.producer = KafkaProducer(
                 value_serializer=lambda payload: json.dumps(payload).encode(settings.value_encoding),
-                **settings.kafka_kwargs,
+                **settings.producer_kwargs,
             )
+            print("[Producer] Kafka Producer 생성 완료")
         except Exception as exc:
             raise RuntimeError(f"Kafka Producer 생성 실패: {exc}") from exc
 
+        print(f"[Producer] UART 포트 열기 시도: {self.settings.dev}")
         try:
             self.serial = serial.Serial(
                 self.settings.dev,
                 baudrate=self.settings.baudrate,
                 timeout=1,
             )
+            print(f"[Producer] UART 포트 열기 완료: {self.settings.dev} @ {self.settings.baudrate}")
         except Exception as exc:
             raise RuntimeError(f"UART 열기 실패 ({self.settings.dev}): {exc}") from exc
 
@@ -84,6 +88,7 @@ class UartKafkaProducer:
             pass
 
     def run(self) -> None:
+        print("[Producer] 데이터 수신 대기 중...")
         last_flush = time.time()
         while True:
             try:
@@ -125,7 +130,7 @@ class UartKafkaProducer:
 
         fields = extract_fields(data)
         payload = {
-            "ts": fields.get("ts"),
+            "ts": fields.get("ts") or time.time(),
             "device_id": fields.get("device_id"),
             "temp_c": fields.get("temp_c"),
             "hum": fields.get("hum"),

@@ -516,6 +516,7 @@ class ConversationManager:
 
         self.state = "LISTENING"
         self.stt.start(on_speech_recognized)
+        self._emit_emotion("neutral", start=True, phase="start", timestamp=time.time())
 
     def _handle_speech_input(self, text: str):
         # 1) 바지인 가드 (값이 0보다 클 때만)
@@ -603,11 +604,13 @@ class ConversationManager:
         self._start_filler_parallel(defer_ms=150)
 
         # 4) 감정 이벤트 카프카 전송
-    def _emit_emotion(self, emotion: str):
-        """대화 텍스트는 전송하지 않고, 감정 라벨만 카프카로 보냄"""
+    def _emit_emotion(self, emotion: str, **extra):
+        """감정 라벨과 추가 메타데이터를 카프카로 전송."""
         try:
             if getattr(self, "kafka", None):
-                self.kafka.send_emotion(emotion)
+                payload = {"emotion": emotion}
+                payload.update({k: v for k, v in extra.items() if v is not None})
+                self.kafka.send(payload)
         except Exception as e:
             self.logger.error(f"Kafka emotion emit error: {e}")
    
@@ -778,6 +781,7 @@ class ConversationManager:
                 pass
 
         self.logger.info("Conversation stopped")
+        self._emit_emotion("neutral", end=True, phase="end", timestamp=time.time())
 
 
 class FileUtils:
