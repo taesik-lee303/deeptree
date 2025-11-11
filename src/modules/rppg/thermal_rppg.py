@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from collections import deque
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict, Optional, Any
 
 import numpy as np
 import cv2
@@ -133,6 +133,14 @@ class ThermalrPPGConfig:
     fast_hr_period: float = 0.5     # 빠른 모드 HR 계산 주기
     fast_present_frames: int = 3    # 빠른 모드 얼굴 인식 프레임
     fast_sampling_rate: float = 20.0 # 빠른 모드 샘플링 레이트
+
+    # Session management parameters
+    session_min_duration: float = 45.0   # 한 세션 최소 측정 시간 (초)
+    session_max_duration: float = 70.0   # 한 세션 최대 유지 시간 (초)
+    session_quality_target: float = 0.55 # 최종 확정에 필요한 품질
+    session_quality_min: float = 0.45    # 후보로 인정되는 최소 품질
+    session_roi_quality_min: float = 0.35
+    session_roi_max_count: int = 2
 
 
 # --------------------- AI Enhancement Classes ---------------------
@@ -1334,6 +1342,11 @@ class ThermalrPPG:
         # AI model update tracking
         self._last_model_update = time.time()
         self._innovation_history = deque(maxlen=50)
+        self._was_present = False
+        self.session_active = False
+        self.session_reported = False
+        self.session_start_ts = 0.0
+        self.session_best: Optional[Dict[str, Any]] = None
 
         logger.info(f"Config: sampling={cfg.sampling_rate}Hz, mode={cfg.processing_mode.value}")
         logger.info(f"AI Enhancements: Wavelet={cfg.enable_wavelet_denoising}, "
@@ -1417,41 +1430,60 @@ class ThermalrPPG:
         motion_pen = float(np.clip(1.0 - (self.motion.motion_level / self.cfg.motion_px_warn), 0.4, 1.0))
         persp_pen  = 0.6 if time.time() < self._persp_until else 1.0
         q_arr = np.array(qs, dtype=np.float32) * motion_pen * persp_pen
+        hr_arr = np.array(hrs, dtype=np.float32)
+        snr_arr = np.array(snrs, dtype=np.float32)
+        harm_arr = np.array(harms, dtype=np.float32)
+        names_arr = np.array(names, dtype=object)
 
         # SNR 하한 미달 ROI는 추가 감산
-        for i, s in enumerate(snrs):
+        for i, s in enumerate(snr_arr):
             if s < self.cfg.snr_face_min:
                 q_arr[i] *= 0.5
 
-        # 🔹 먼저 diag를 구성한 뒤…
+        # 품질 기준 이하 ROI 제거 및 상위 ROI만 활용
+        quality_idx = [i for i, q_val in enumerate(q_arr) if q_val >= self.cfg.session_roi_quality_min]
+        if not quality_idx:
+            return None, 0.0, {}
+        quality_idx = sorted(quality_idx, key=lambda i: q_arr[i], reverse=True)
+        if self.cfg.session_roi_max_count > 0:
+            quality_idx = quality_idx[:self.cfg.session_roi_max_count]
+
+        hr_arr = hr_arr[quality_idx]
+        q_arr = q_arr[quality_idx]
+        snr_arr = snr_arr[quality_idx]
+        harm_arr = harm_arr[quality_idx]
+        names_arr = names_arr[quality_idx]
+
         diag = {
-            names[i]: {
-                'hr':   float(hrs[i]),
-                'snr':  float(snrs[i]),
+            str(names_arr[i]): {
+                'hr':   float(hr_arr[i]),
+                'snr':  float(snr_arr[i]),
                 'q':    float(q_arr[i]),
-                'harm': float(harms[i])
-            } for i in range(len(names))
+                'harm': float(harm_arr[i])
+            } for i in range(len(names_arr))
         }
+        names_list = [str(n) for n in names_arr]
 
         # 🔹 AI 기반 ROI 가중치 최적화
         if self.ensemble_optimizer is not None:
             # 앙상블 학습으로 최적 가중치 예측
+            forehead_buffer = list(self.buffers.get('forehead', []))
+            ambient_temp = float(np.mean(forehead_buffer)) if forehead_buffer else 25.0
             optimal_weights = self.ensemble_optimizer.predict_optimal_weights(
-                diag, self.motion.motion_level, 
-                float(np.mean([roi_vals.get('forehead', 0) for roi_vals in [self.buffers.get('forehead', [])]]))
+                diag, self.motion.motion_level, ambient_temp
             )
-            w = np.array([optimal_weights.get(name, 1.0) for name in names])
+            w = np.array([optimal_weights.get(name, 1.0) for name in names_list], dtype=np.float32)
         else:
             # 기존 방식
             roi_boost = self._roi_dynamic_boost(diag)
             w = q_arr.copy()
-            for i, name in enumerate(names):
+            for i, name in enumerate(names_list):
                 w[i] *= roi_boost.get(name, 1.0)
         
         w = w / (w.sum() + 1e-6)
 
         # 최종 HR/Q
-        hr_final = float(np.sum(np.array(hrs) * w))
+        hr_final = float(np.sum(hr_arr * w))
         q_final  = float(np.mean(q_arr))
         
         # 칼만 필터 적용
@@ -1465,9 +1497,11 @@ class ThermalrPPG:
         
         # 개인화된 보정 적용
         if self.personalized_model is not None:
+            forehead_buffer = list(self.buffers.get('forehead', []))
+            ambient_temp = float(np.mean(forehead_buffer)) if forehead_buffer else 25.0
             thermal_features = {
                 'motion_level': self.motion.motion_level,
-                'ambient_temp': float(np.mean([roi_vals.get('forehead', 0) for roi_vals in [self.buffers.get('forehead', [])]]))
+                'ambient_temp': ambient_temp
             }
             hr_final = self.personalized_model.get_personalized_correction(hr_final, thermal_features)
 
@@ -1531,6 +1565,114 @@ class ThermalrPPG:
                 f"🎨 {mode} RGB{rgb} I={inten:.2f} {dur}s{art}"
             )
             st.update({'ts': now, 'hr': hr, 'rr': rr, 'q': q, 'dtn': dT_nose, 'dtc': dT_cheek})
+
+    def _start_session(self):
+        self.session_active = True
+        self.session_reported = False
+        self.session_start_ts = time.time()
+        self.session_best = None
+        logger.info("Measurement session started")
+
+    def _reset_session(self):
+        if self.session_active and not self.session_reported:
+            logger.info("Measurement session reset without final result")
+        self.session_active = False
+        self.session_reported = False
+        self.session_start_ts = 0.0
+        self.session_best = None
+
+    def _update_session(self, hr, q, rr, dT_nose, dT_cheek, fh_temp, color_rec, diag, artifacts):
+        if not self.session_active:
+            return
+
+        now = time.time()
+        elapsed = now - self.session_start_ts if self.session_start_ts else 0.0
+
+        if hr is not None and q >= self.cfg.session_quality_min:
+            candidate = {
+                'hr': float(hr),
+                'q': float(q),
+                'rr': float(rr) if rr is not None else None,
+                'dT_nose': dT_nose,
+                'dT_cheek': dT_cheek,
+                'forehead_temp': fh_temp,
+                'color_rec': color_rec,
+                'diag': diag,
+                'artifacts': artifacts,
+                'timestamp': now,
+            }
+            if self.session_best is None:
+                self.session_best = candidate
+            else:
+                best_q = self.session_best.get('q', 0.0)
+                best_hr = self.session_best.get('hr')
+                if candidate['q'] > best_q + 1e-3:
+                    self.session_best = candidate
+                elif abs(candidate['q'] - best_q) <= 1e-3 and best_hr is not None:
+                    if abs(candidate['hr'] - best_hr) <= 2.0:
+                        self.session_best = candidate
+                else:
+                    if candidate['artifacts'] and not self.session_best.get('artifacts'):
+                        self.session_best['artifacts'] = candidate['artifacts']
+                    if candidate['color_rec'] is not None and not self.session_best.get('color_rec'):
+                        self.session_best['color_rec'] = candidate['color_rec']
+
+        if self.session_reported or self.session_best is None:
+            return
+
+        if elapsed >= self.cfg.session_min_duration and self.session_best['q'] >= self.cfg.session_quality_target:
+            self._finalize_session("quality_target")
+        elif elapsed >= self.cfg.session_max_duration:
+            self._finalize_session("max_duration")
+
+    def _finalize_session(self, reason: str):
+        if self.session_best is None or self.session_reported:
+            return
+        best = self.session_best
+        if best.get('color_rec') is None and self.therapist is not None:
+            best['color_rec'] = self.therapist.recommend(
+                ColorMetrics(
+                    hr=best['hr'],
+                    q=best['q'],
+                    rr=best['rr'],
+                    dT_nose=best['dT_nose'],
+                    dT_cheek=best['dT_cheek'],
+                    forehead_temp=best['forehead_temp']
+                )
+            )
+        self.session_reported = True
+        self._report_session_result(best, reason)
+
+    def _report_session_result(self, best: Dict[str, Any], reason: str):
+        elapsed = time.time() - self.session_start_ts if self.session_start_ts else 0.0
+        logger.info(
+            f"✅ Measurement finalized ({reason}) | elapsed={elapsed:.1f}s | "
+            f"HR={best['hr']:.1f} BPM (q={best['q']:.2f}) | RR={best['rr'] if best['rr'] is not None else '--'}"
+        )
+        color_rec = best.get('color_rec')
+        self._maybe_status(
+            best['hr'],
+            best['q'],
+            best['rr'],
+            best['dT_nose'],
+            best['dT_cheek'],
+            color_rec,
+            best.get('artifacts'),
+        )
+        if self.mqtt is not None and color_rec is not None and best['q'] >= self.cfg.mqtt_quality_min:
+            try:
+                self.mqtt.publish_color(color_rec, metrics={
+                    "hr": best['hr'],
+                    "rr": best['rr'],
+                    "q": best['q'],
+                    "dT_nose": best['dT_nose'],
+                    "dT_cheek": best['dT_cheek'],
+                    "forehead": best['forehead_temp'],
+                    "motion_px": self.motion.motion_level,
+                    "artifacts": best.get('artifacts')
+                }, also_pico=True)
+            except Exception as exc:
+                logger.warning(f"MQTT publish failed: {exc}")
 
     def _ambient_from_frame(self, up: np.ndarray, bbox):
         if bbox is None:
@@ -1756,6 +1898,15 @@ class ThermalrPPG:
                     artifacts.append("motion")
                 art_txt = ",".join(artifacts) if artifacts else None
 
+                if present and not self._was_present:
+                    self._start_session()
+                elif not present and self._was_present:
+                    if self.session_active and not self.session_reported and self.session_best and \
+                            self.session_best.get('q', 0.0) >= self.cfg.session_quality_target:
+                        self._finalize_session("presence_lost")
+                    self._reset_session()
+                self._was_present = present
+
                 # Compute vitals (throttled)
                 now = time.time()
                 hr, q, diag = (None, 0.0, {})
@@ -1801,22 +1952,13 @@ class ThermalrPPG:
                     self._update_ai_models(hr, diag, roi_vals, ambient_val)
                     self._last_model_update = now
 
-                # Color recommendation & MQTT (only when present and hr available)
+                # Color recommendation (UI / session tracking)
                 color_rec = None
                 if hr is not None and present:
                     color_rec = self.therapist.recommend(
                         ColorMetrics(hr=hr, q=q, rr=rr, dT_nose=dT_nose, dT_cheek=dT_cheek, forehead_temp=fh_temp)
                     )
-                    self._maybe_status(hr, q, rr, dT_nose, dT_cheek, color_rec, art_txt)
-                    if self.mqtt is not None and q >= self.cfg.mqtt_quality_min:
-                        self.mqtt.publish_color(color_rec, metrics={
-                            "hr": hr, "rr": rr, "q": q,
-                            "dT_nose": dT_nose, "dT_cheek": dT_cheek, "forehead": fh_temp,
-                            "motion_px": self.motion.motion_level, "artifacts": art_txt
-                        }, also_pico=True)
-                else:
-                    # Absent or no HR: quieter status
-                    self._maybe_status(None, 0.0, rr, dT_nose, dT_cheek, None, art_txt)
+                self._update_session(hr, q, rr, dT_nose, dT_cheek, fh_temp, color_rec, diag, art_txt)
 
                 # UI
                 if self.monitor is not None:

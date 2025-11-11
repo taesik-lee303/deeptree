@@ -1,6 +1,6 @@
 """MQTT Publisher for color therapy recommendations.
 
-- Publishes full payload to <topic_base>/color
+- Publishes full payload to <topic_base>/total
 - Also (optional) publishes Pico-compatible payload to settings.pico_topic: {"r","g","b","intensity"}
 """
 from __future__ import annotations
@@ -70,7 +70,7 @@ class MqttColorPublisher:
             "ts": int(now)
         }
         try:
-            self.client.publish(settings.topic_color, json.dumps(rich), qos=1, retain=False)
+            self.client.publish(settings.topic_total, json.dumps(rich), qos=1, retain=False)
         except Exception:
             pass
 
