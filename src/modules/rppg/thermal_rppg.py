@@ -141,6 +141,16 @@ class ThermalrPPGConfig:
     session_quality_min: float = 0.45    # 후보로 인정되는 최소 품질
     session_roi_quality_min: float = 0.35
     session_roi_max_count: int = 2
+    
+    # Face detection enhancement parameters
+    enable_face_preprocessing: bool = True  # 전처리 파이프라인 활성화
+    enable_dead_pixel_removal: bool = True  # Dead pixel 제거
+    enable_clahe: bool = True  # CLAHE contrast enhancement
+    enable_bilateral_filter: bool = False  # Bilateral filtering (느리지만 노이즈 제거 효과)
+    clahe_clip_limit: float = 2.0  # CLAHE clip limit
+    clahe_tile_size: int = 8  # CLAHE tile grid size
+    face_temp_range: Tuple[float, float] = (28.0, 35.0)  # 얼굴 온도 검증 범위 (°C)
+    enable_kcf_tracking: bool = False  # KCF 추적기 사용 (템플릿 매칭 대신)
 
 
 # --------------------- AI Enhancement Classes ---------------------
@@ -644,6 +654,9 @@ class MLX9064XInterface:
                 self.sensor.getFrame(buf)
                 frame = np.array(buf, dtype=np.float32).reshape(self.res)
                 frame = np.clip(frame, -20.0, 100.0)
+                # Dead pixel removal (median filter) - 문서 권장사항
+                frame = cv2.medianBlur(frame, 3)
+                # 기본 가우시안 블러
                 frame = cv2.GaussianBlur(frame, (3, 3), 0.4)
                 return frame
         except Exception as e:
@@ -719,7 +732,11 @@ class MultiFrameSuperRes:
 class ThermalFaceDetector:
     def __init__(self, ambient_delta: float = 0.8, p_hot: float = 75.0,  # 더 관대한 임계값
                  min_area_frac: float = 0.015, max_area_frac: float = 0.5,  # 면적 범위 확대
-                 top_bias: float = 0.5, search_expand: float = 0.8, lost_tolerance: int = 20):  # 더 관대한 설정
+                 top_bias: float = 0.5, search_expand: float = 0.8, lost_tolerance: int = 20,  # 더 관대한 설정
+                 enable_preprocessing: bool = True, enable_clahe: bool = True,
+                 enable_bilateral: bool = False, clahe_clip_limit: float = 2.0,
+                 clahe_tile_size: int = 8, face_temp_range: Tuple[float, float] = (28.0, 35.0),
+                 enable_kcf: bool = False):
         self.ambient_delta = ambient_delta
         self.p_hot = p_hot
         self.min_area_frac = min_area_frac
@@ -730,6 +747,23 @@ class ThermalFaceDetector:
         self.last_bbox = None
         self.last_template = None
         self.missed = 0
+        
+        # Enhanced preprocessing options (문서 기반 개선사항)
+        self.enable_preprocessing = enable_preprocessing
+        self.enable_clahe = enable_clahe
+        self.enable_bilateral = enable_bilateral
+        self.face_temp_range = face_temp_range
+        self.enable_kcf = enable_kcf
+        
+        # CLAHE 초기화
+        if self.enable_clahe:
+            self.clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(clahe_tile_size, clahe_tile_size))
+        else:
+            self.clahe = None
+        
+        # KCF Tracker 초기화
+        self.kcf_tracker = None
+        self.kcf_bbox = None
 
     def _score_components(self, frame, stats, cents, cx_img, cy_img):
         best_idx, best_score = -1, -1e9
@@ -759,12 +793,123 @@ class ThermalFaceDetector:
         bh = int(min(H - y, int(bh * (1 + 2*pad))))
         return (x, y, bw, bh)
 
+    def _preprocess_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        열화상 프레임 전처리 파이프라인 (문서 기반 개선)
+        Returns: (processed_uint8, original_thermal)
+        """
+        if not self.enable_preprocessing:
+            return normalize_to_uint8(frame), frame
+        
+        # 1. 온도 정규화 (20-40°C -> 0-255)
+        temp_min, temp_max = 20.0, 40.0
+        normalized = np.clip(
+            (frame - temp_min) / (temp_max - temp_min) * 255,
+            0, 255
+        ).astype(np.uint8)
+        
+        # 2. CLAHE enhancement (문서 권장)
+        if self.enable_clahe and self.clahe is not None:
+            enhanced = self.clahe.apply(normalized)
+        else:
+            enhanced = normalized
+        
+        # 3. Bilateral filtering (선택적, 느리지만 노이즈 제거 효과)
+        if self.enable_bilateral:
+            enhanced = cv2.bilateralFilter(enhanced, d=9, sigmaColor=75, sigmaSpace=75)
+        
+        return enhanced, frame
+    
+    def _validate_face_temperature(self, frame: np.ndarray, bbox) -> bool:
+        """
+        온도 기반 얼굴 검증 (문서 권장: 28-35°C 범위)
+        """
+        if bbox is None:
+            return False
+        
+        x, y, w, h = bbox
+        # bbox가 프레임 범위를 벗어나지 않도록 클리핑
+        x = max(0, min(x, frame.shape[1] - 1))
+        y = max(0, min(y, frame.shape[0] - 1))
+        w = min(w, frame.shape[1] - x)
+        h = min(h, frame.shape[0] - y)
+        
+        if w <= 0 or h <= 0:
+            return False
+        
+        roi_temps = frame[y:y+h, x:x+w]
+        if roi_temps.size == 0:
+            return False
+        
+        mean_temp = float(np.mean(roi_temps))
+        temp_min, temp_max = self.face_temp_range
+        
+        # 얼굴 온도 범위 검증
+        is_valid = temp_min <= mean_temp <= temp_max
+        
+        # 추가: 핫 픽셀 비율 체크 (30°C 이상 픽셀 비율)
+        hot_pixels = np.sum(roi_temps > 30.0)
+        hot_ratio = hot_pixels / roi_temps.size if roi_temps.size > 0 else 0.0
+        
+        # 온도 범위 내이고, 적절한 핫 픽셀 비율이면 유효
+        return is_valid and hot_ratio > 0.1
+    
     def _threshold(self, frame):
         ambient = float(np.median(frame))
         t1 = ambient + self.ambient_delta
         t2 = float(np.percentile(frame, self.p_hot))
         thr = max(t1, t2)
         return (frame >= thr).astype(np.uint8)
+    
+    def _track_kcf(self, frame_u8: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+        """
+        KCF 추적기 사용 (문서 권장 - 템플릿 매칭보다 안정적)
+        """
+        if not self.enable_kcf:
+            return None
+        
+        if self.kcf_tracker is None or self.kcf_bbox is None:
+            return None
+        
+        try:
+            success, bbox = self.kcf_tracker.update(frame_u8)
+            if success:
+                x, y, w, h = tuple(map(int, bbox))
+                # bbox 유효성 검사
+                if w > 0 and h > 0 and x >= 0 and y >= 0:
+                    self.kcf_bbox = (x, y, w, h)
+                    return self.kcf_bbox
+            else:
+                # 추적 실패 시 리셋
+                self.kcf_tracker = None
+                self.kcf_bbox = None
+        except Exception as e:
+            logger.debug(f"KCF tracking error: {e}")
+            self.kcf_tracker = None
+            self.kcf_bbox = None
+        
+        return None
+    
+    def _init_kcf_tracker(self, frame_u8: np.ndarray, bbox: Tuple[int, int, int, int]):
+        """KCF 추적기 초기화"""
+        if not self.enable_kcf:
+            return
+        
+        try:
+            self.kcf_tracker = cv2.TrackerKCF_create()
+            # bbox를 (x, y, w, h) 형식으로 변환
+            x, y, w, h = bbox
+            bbox_float = (float(x), float(y), float(w), float(h))
+            success = self.kcf_tracker.init(frame_u8, bbox_float)
+            if success:
+                self.kcf_bbox = bbox
+            else:
+                self.kcf_tracker = None
+                self.kcf_bbox = None
+        except Exception as e:
+            logger.debug(f"KCF tracker init failed: {e}")
+            self.kcf_tracker = None
+            self.kcf_bbox = None
 
     def _template_track(self, frame_u8, search_bbox):
         x, y, w, h = search_bbox
@@ -785,7 +930,9 @@ class ThermalFaceDetector:
     def detect(self, frame: np.ndarray):
         H, W = frame.shape
         cx_img, cy_img = W*0.5, H*self.top_bias
-        frame_u8 = normalize_to_uint8(frame)
+        
+        # 전처리 파이프라인 적용 (문서 기반 개선)
+        frame_u8, frame_thermal = self._preprocess_frame(frame)
 
         # 디버깅 정보 수집
         debug_info = {
@@ -800,6 +947,17 @@ class ThermalFaceDetector:
             'threshold_stats': {}
         }
 
+        # KCF 추적기 우선 시도 (활성화된 경우)
+        if self.enable_kcf and self.kcf_tracker is not None:
+            kcf_bbox = self._track_kcf(frame_u8)
+            if kcf_bbox is not None:
+                # 온도 기반 검증
+                if self._validate_face_temperature(frame_thermal, kcf_bbox):
+                    self.last_bbox = kcf_bbox
+                    self.missed = 0
+                    debug_info['detection_method'] = 'kcf_tracking'
+                    return self.last_bbox
+
         if self.last_bbox is not None and self.missed < self.lost_tolerance:
             debug_info['detection_method'] = 'tracking'
             lx, ly, lw, lh = self.last_bbox
@@ -809,7 +967,7 @@ class ThermalFaceDetector:
             sy = max(0, ly-ey)
             sw = min(W-sx, lw+2*ex)
             sh = min(H-sy, lh+2*ey)
-            local = frame[sy:sy+sh, sx:sx+sw]
+            local = frame_thermal[sy:sy+sh, sx:sx+sw]
             hot = self._threshold(local)
             k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             hot = cv2.morphologyEx(hot, cv2.MORPH_OPEN, k, iterations=1)
@@ -821,29 +979,39 @@ class ThermalFaceDetector:
                 bbox = self._score_components(local, stats, cents, cx_img - sx, cy_img - sy)
                 if bbox is not None:
                     x, y, w, h = bbox
-                    self.last_bbox = (sx+x, sy+y, w, h)
-                    self.missed = 0
-                    roi_u8 = frame_u8[sy+y:sy+y+h, sx+x:sx+x+w]
-                    if roi_u8.size >= 9:
-                        self.last_template = cv2.resize(roi_u8, (max(8, w), max(8, h)))
-                    debug_info['detection_method'] = 'tracking_components'
-                    return self.last_bbox
-            track = self._template_track(frame_u8, (sx, sy, sw, sh))
-            if track is not None:
-                self.last_bbox = track
-                self.missed = 0
-                debug_info['detection_method'] = 'tracking_template'
-                return self.last_bbox
+                    full_bbox = (sx+x, sy+y, w, h)
+                    # 온도 기반 검증 추가
+                    if self._validate_face_temperature(frame_thermal, full_bbox):
+                        self.last_bbox = full_bbox
+                        self.missed = 0
+                        # KCF 추적기 초기화
+                        if self.enable_kcf:
+                            self._init_kcf_tracker(frame_u8, full_bbox)
+                        roi_u8 = frame_u8[sy+y:sy+y+h, sx+x:sx+x+w]
+                        if roi_u8.size >= 9:
+                            self.last_template = cv2.resize(roi_u8, (max(8, w), max(8, h)))
+                        debug_info['detection_method'] = 'tracking_components'
+                        return self.last_bbox
+            # 템플릿 매칭 시도 (KCF가 비활성화된 경우)
+            if not self.enable_kcf:
+                track = self._template_track(frame_u8, (sx, sy, sw, sh))
+                if track is not None:
+                    # 온도 기반 검증
+                    if self._validate_face_temperature(frame_thermal, track):
+                        self.last_bbox = track
+                        self.missed = 0
+                        debug_info['detection_method'] = 'tracking_template'
+                        return self.last_bbox
             self.missed += 1
 
         # 전체 프레임 검색
         debug_info['detection_method'] = 'full_frame'
-        hot = self._threshold(frame)
+        hot = self._threshold(frame_thermal)
         
         # 임계값 통계 수집
-        ambient = float(np.median(frame))
+        ambient = float(np.median(frame_thermal))
         t1 = ambient + self.ambient_delta
-        t2 = float(np.percentile(frame, self.p_hot))
+        t2 = float(np.percentile(frame_thermal, self.p_hot))
         thr = max(t1, t2)
         debug_info['threshold_stats'] = {
             'ambient': ambient,
@@ -861,21 +1029,42 @@ class ThermalFaceDetector:
         
         if num <= 1:
             self.missed += 1
+            # KCF 추적기 리셋
+            if self.enable_kcf:
+                self.kcf_tracker = None
+                self.kcf_bbox = None
             # 디버깅 로그 출력
             if self.missed % 30 == 0:  # 30프레임마다 로그
                 logger.warning(f"얼굴 인식 실패 - 컴포넌트 없음: {debug_info}")
             return None
             
-        bbox = self._score_components(frame, stats, cents, cx_img, cy_img)
+        bbox = self._score_components(frame_thermal, stats, cents, cx_img, cy_img)
         if bbox is None:
             self.missed += 1
+            # KCF 추적기 리셋
+            if self.enable_kcf:
+                self.kcf_tracker = None
+                self.kcf_bbox = None
             # 디버깅 로그 출력
             if self.missed % 30 == 0:  # 30프레임마다 로그
                 logger.warning(f"얼굴 인식 실패 - 스코어링 실패: {debug_info}")
             return None
+        
+        # 온도 기반 검증 추가 (문서 권장)
+        if not self._validate_face_temperature(frame_thermal, bbox):
+            self.missed += 1
+            if self.missed % 30 == 0:
+                mean_temp = float(np.mean(frame_thermal[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]))
+                logger.warning(f"얼굴 인식 실패 - 온도 검증 실패: {mean_temp:.1f}°C (범위: {self.face_temp_range[0]}-{self.face_temp_range[1]}°C)")
+            return None
             
         self.last_bbox = bbox
         self.missed = 0
+        
+        # KCF 추적기 초기화
+        if self.enable_kcf:
+            self._init_kcf_tracker(frame_u8, bbox)
+        
         x, y, w, h = bbox
         roi_u8 = frame_u8[y:y+h, x:x+w]
         if roi_u8.size >= 9:
@@ -883,7 +1072,8 @@ class ThermalFaceDetector:
         
         # 성공 시 디버깅 로그
         if self.missed == 0:  # 첫 성공이거나 연속 성공
-            logger.info(f"얼굴 인식 성공: {debug_info}")
+            mean_temp = float(np.mean(frame_thermal[y:y+h, x:x+w]))
+            logger.info(f"얼굴 인식 성공: {debug_info} | 온도: {mean_temp:.1f}°C")
             
         return self.last_bbox
 
@@ -1295,7 +1485,15 @@ class ThermalrPPG:
     def __init__(self, cfg: ThermalrPPGConfig, mqtt_pub: Optional[MqttColorPublisher] = None):
         self.cfg = cfg
         self.sensor = MLX9064XInterface(refresh_hz=int(cfg.sampling_rate))
-        self.detector = ThermalFaceDetector()
+        self.detector = ThermalFaceDetector(
+            enable_preprocessing=cfg.enable_face_preprocessing,
+            enable_clahe=cfg.enable_clahe,
+            enable_bilateral=cfg.enable_bilateral_filter,
+            clahe_clip_limit=cfg.clahe_clip_limit,
+            clahe_tile_size=cfg.clahe_tile_size,
+            face_temp_range=cfg.face_temp_range,
+            enable_kcf=cfg.enable_kcf_tracking
+        )
         self.motion = MotionCompensator()
         self.motion.mc_stride = cfg.mc_stride
         self.roi = ROIManager()

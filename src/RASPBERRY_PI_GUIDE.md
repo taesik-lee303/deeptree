@@ -200,3 +200,4 @@ pip install --no-cache-dir --force-reinstall numpy scipy scikit-learn
 - **ONNX Runtime**: 크로스 플랫폼 추론 엔진
 - **OpenVINO**: Intel 최적화 추론 엔진
 - **Edge TPU**: 구글 Edge TPU 활용 (라즈베리파이5 호환)
+
