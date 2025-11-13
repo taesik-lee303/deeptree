@@ -70,17 +70,31 @@ class MqttColorPublisher:
             "ts": int(now)
         }
         try:
-            self.client.publish(settings.topic_total, json.dumps(rich), qos=1, retain=False)
-        except Exception:
-            pass
+            result = self.client.publish(settings.topic_total, json.dumps(rich), qos=1, retain=False)
+            if result.rc == 0:
+                import logging
+                logging.getLogger(__name__).debug(f"MQTT published to {settings.topic_total}: {len(json.dumps(rich))} bytes")
+            else:
+                import logging
+                logging.getLogger(__name__).warning(f"MQTT publish failed to {settings.topic_total}: rc={result.rc}")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"MQTT publish exception to {settings.topic_total}: {e}")
 
         if also_pico and settings.pico_topic:
             try:
                 r, g, b = list(rec.rgb_primary)
                 pico = {"r": int(r), "g": int(g), "b": int(b), "intensity": float(rec.intensity)}
-                self.client.publish(settings.pico_topic, json.dumps(pico), qos=1, retain=False)
-            except Exception:
-                pass
+                result = self.client.publish(settings.pico_topic, json.dumps(pico), qos=1, retain=False)
+                if result.rc == 0:
+                    import logging
+                    logging.getLogger(__name__).debug(f"MQTT published to {settings.pico_topic}: {len(json.dumps(pico))} bytes")
+                else:
+                    import logging
+                    logging.getLogger(__name__).warning(f"MQTT publish failed to {settings.pico_topic}: rc={result.rc}")
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"MQTT publish exception to {settings.pico_topic}: {e}")
 
     def _on_connect(self, client, userdata, flags, rc):
         self.client.publish(settings.topic_status, payload="online", qos=1, retain=True)

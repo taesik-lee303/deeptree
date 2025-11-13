@@ -151,6 +151,14 @@ class ThermalrPPGConfig:
     clahe_tile_size: int = 8  # CLAHE tile grid size
     face_temp_range: Tuple[float, float] = (28.0, 35.0)  # 얼굴 온도 검증 범위 (°C)
     enable_kcf_tracking: bool = False  # KCF 추적기 사용 (템플릿 매칭 대신)
+    
+    # Upscaling parameters
+    up_scale: int = 3  # 얼굴 탐지 및 ROI 추출용 업스케일 배수 (3-6 권장, 카메라 거리에 따라 조정)
+    
+    # UI display parameters
+    ui_scale: float = 1.5  # 모니터링 화면 확대 배수 (1.0=기본, 1.5=1.5배, 2.0=2배 등)
+    ui_window_width: Optional[int] = None  # 창 초기 너비 (None이면 자동)
+    ui_window_height: Optional[int] = None  # 창 초기 높이 (None이면 자동)
 
 
 # --------------------- AI Enhancement Classes ---------------------
@@ -1343,9 +1351,13 @@ class PresenceGate:
 
 # --------------------- UI ---------------------
 class MonitorUI:
-    def __init__(self, up_scale: int, fs: float):
+    def __init__(self, up_scale: int, fs: float, ui_scale: float = 1.5, 
+                 window_width: Optional[int] = None, window_height: Optional[int] = None):
         self.up_scale = up_scale
         self.fs = fs
+        self.ui_scale = ui_scale
+        self.window_width = window_width
+        self.window_height = window_height
         self.hr_hist = deque(maxlen=240)
         self.qual_hist = deque(maxlen=240)
         self.last_tick = time.time()
@@ -1354,8 +1366,11 @@ class MonitorUI:
         self.compare_mode = 'SR'
         self._ui_tick = 0
         self.ui_stride = 1
+        self._window_created = False
+        self._window_size_set = False
         try:
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            self._window_created = True
         except Exception:
             logger.warning("Cannot create window (headless?). UI disabled.")
 
@@ -1468,7 +1483,31 @@ class MonitorUI:
                 line += 50
 
         out = np.hstack([base, panel])
+        
+        # UI 스케일링 적용
+        if self.ui_scale != 1.0:
+            h_out, w_out = out.shape[:2]
+            new_h = int(h_out * self.ui_scale)
+            new_w = int(w_out * self.ui_scale)
+            out = cv2.resize(out, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        
         try:
+            # 창 크기 초기 설정 (첫 프레임에서만)
+            if self._window_created and not self._window_size_set and (self.window_width is not None or self.window_height is not None):
+                if self.window_width is not None and self.window_height is not None:
+                    cv2.resizeWindow(self.window_name, self.window_width, self.window_height)
+                elif self.window_width is not None:
+                    # 높이는 비율 유지
+                    h, w = out.shape[:2]
+                    aspect = h / w
+                    cv2.resizeWindow(self.window_name, self.window_width, int(self.window_width * aspect))
+                elif self.window_height is not None:
+                    # 너비는 비율 유지
+                    h, w = out.shape[:2]
+                    aspect = w / h
+                    cv2.resizeWindow(self.window_name, int(self.window_height * aspect), self.window_height)
+                self._window_size_set = True  # 한 번만 실행
+            
             cv2.imshow(self.window_name, out)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
@@ -1504,7 +1543,7 @@ class ThermalrPPG:
         self.resp = RespEstimator(cfg.sampling_rate)
         self.buffers: Dict[str, deque] = {}
       
-        self.up_scale = 6
+        self.up_scale = cfg.up_scale
         self.mfsr = MultiFrameSuperRes(
             scale=cfg.superres_scale,
             max_frames=cfg.superres_frames,
@@ -1512,7 +1551,13 @@ class ThermalrPPG:
         ) if cfg.enable_superres else None
         self._sr_count = 0
 
-        self.monitor = MonitorUI(self.up_scale, cfg.sampling_rate) if cfg.debug_visual else None
+        self.monitor = MonitorUI(
+            self.up_scale, 
+            cfg.sampling_rate,
+            ui_scale=cfg.ui_scale,
+            window_width=cfg.ui_window_width,
+            window_height=cfg.ui_window_height
+        ) if cfg.debug_visual else None
         if self.monitor is not None:
             self.monitor.ui_stride = 1  # increase to 2~3 to reduce UI load
 
@@ -1862,6 +1907,10 @@ class ThermalrPPG:
         )
         if self.mqtt is not None and color_rec is not None and best['q'] >= self.cfg.mqtt_quality_min:
             try:
+                from networks.mqtt.mqtt_config import settings
+                logger.info(f"📤 MQTT 전송 시도: {settings.host}:{settings.port} | "
+                           f"total={settings.topic_total} | pico={settings.pico_topic} | "
+                           f"HR={best['hr']:.1f}, Q={best['q']:.2f}")
                 self.mqtt.publish_color(color_rec, metrics={
                     "hr": best['hr'],
                     "rr": best['rr'],
@@ -1872,8 +1921,9 @@ class ThermalrPPG:
                     "motion_px": self.motion.motion_level,
                     "artifacts": best.get('artifacts')
                 }, also_pico=True)
+                logger.info(f"✅ MQTT 전송 완료: {settings.topic_total} 및 {settings.pico_topic}")
             except Exception as exc:
-                logger.warning(f"MQTT publish failed: {exc}")
+                logger.error(f"❌ MQTT publish failed: {exc}", exc_info=True)
 
     def _ambient_from_frame(self, up: np.ndarray, bbox):
         if bbox is None:
@@ -2222,6 +2272,14 @@ if __name__ == "__main__":
         fast_hr_period=0.5,
         fast_present_frames=3,
         fast_sampling_rate=20.0,
+        
+        # Upscaling (카메라 거리에 따라 조정: 가까우면 3-4, 멀면 5-6)
+        up_scale=4,  # 기본값 4 (기존 6에서 성능 향상을 위해 낮춤)
+        
+        # UI Display (모니터링 화면 크기 조절)
+        ui_scale=1.5,  # 화면 확대 배수 (1.0=기본, 1.5=1.5배, 2.0=2배 등)
+        # ui_window_width=1920,  # 창 초기 너비 (선택적, None이면 자동)
+        # ui_window_height=1080,  # 창 초기 높이 (선택적, None이면 자동)
     )
     try:
         mqtt_pub = MqttColorPublisher().connect()
