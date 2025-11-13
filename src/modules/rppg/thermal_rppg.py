@@ -7,7 +7,7 @@ import time, logging, warnings
 import os
 from dataclasses import dataclass
 from enum import Enum
-from collections import deque
+from collections import deque, Counter
 from typing import Tuple, Dict, Optional, Any
 
 import numpy as np
@@ -1608,6 +1608,7 @@ class ThermalrPPG:
         self.session_reported = False
         self.session_start_ts = 0.0
         self.session_best: Optional[Dict[str, Any]] = None
+        self.session_measurements: list = []  # 세션 동안 모든 측정값 저장
 
         logger.info(f"Config: sampling={cfg.sampling_rate}Hz, mode={cfg.processing_mode.value}")
         logger.info(f"AI Enhancements: Wavelet={cfg.enable_wavelet_denoising}, "
@@ -1832,6 +1833,7 @@ class ThermalrPPG:
         self.session_reported = False
         self.session_start_ts = time.time()
         self.session_best = None
+        self.session_measurements = []  # 세션 측정값 초기화
         logger.info("Measurement session started")
 
     def _reset_session(self):
@@ -1841,6 +1843,7 @@ class ThermalrPPG:
         self.session_reported = False
         self.session_start_ts = 0.0
         self.session_best = None
+        self.session_measurements = []
 
     def _update_session(self, hr, q, rr, dT_nose, dT_cheek, fh_temp, color_rec, diag, artifacts):
         if not self.session_active:
@@ -1862,6 +1865,8 @@ class ThermalrPPG:
                 'artifacts': artifacts,
                 'timestamp': now,
             }
+            # 세션 측정값 저장
+            self.session_measurements.append(candidate)
             if self.session_best is None:
                 self.session_best = candidate
             else:
@@ -1904,37 +1909,122 @@ class ThermalrPPG:
         self.session_reported = True
         self._report_session_result(best, reason)
 
+    def _calculate_session_statistics(self) -> Dict[str, Any]:
+        """세션 측정값으로부터 통계 계산"""
+        if not self.session_measurements:
+            return {}
+        
+        # HR 값 추출
+        hrs = [m['hr'] for m in self.session_measurements if m.get('hr') is not None]
+        if not hrs:
+            return {}
+        
+        # 1. 최대값
+        hr_max = float(np.max(hrs))
+        
+        # 2. 최빈값의 중앙값 (빈도 높은 값의 중앙값)
+        # HR을 1 BPM 단위로 반올림하여 구간별 그룹화
+        hr_rounded = [round(h) for h in hrs]
+        counter = Counter(hr_rounded)
+        if counter:
+            # 가장 빈도가 높은 값(들) 찾기
+            max_count = max(counter.values())
+            most_common_values = [val for val, count in counter.items() if count == max_count]
+            # 가장 빈도 높은 구간의 원본 값들
+            mode_hrs = [h for h, r in zip(hrs, hr_rounded) if r in most_common_values]
+            hr_mode_median = float(np.median(mode_hrs)) if mode_hrs else hr_max
+        else:
+            hr_mode_median = hr_max
+        
+        # 3. 최고 q값
+        qs = [m['q'] for m in self.session_measurements if m.get('q') is not None]
+        q_max = float(np.max(qs)) if qs else 0.0
+        
+        # 최고 q값을 가진 측정값 찾기
+        best_q_measurement = max(self.session_measurements, key=lambda m: m.get('q', 0.0)) if self.session_measurements else None
+        
+        return {
+            'hr_max': hr_max,
+            'hr_mode_median': hr_mode_median,
+            'q_max': q_max,
+            'best_q_measurement': best_q_measurement,
+            'total_measurements': len(self.session_measurements)
+        }
+
     def _report_session_result(self, best: Dict[str, Any], reason: str):
         elapsed = time.time() - self.session_start_ts if self.session_start_ts else 0.0
-        logger.info(
-            f"✅ Measurement finalized ({reason}) | elapsed={elapsed:.1f}s | "
-            f"HR={best['hr']:.1f} BPM (q={best['q']:.2f}) | RR={best['rr'] if best['rr'] is not None else '--'}"
-        )
-        color_rec = best.get('color_rec')
+        
+        # 세션 통계 계산
+        stats = self._calculate_session_statistics()
+        
+        # 통계 기반 최종 값 선택
+        if stats and stats.get('best_q_measurement') is not None:
+            # 최고 q값을 가진 측정값 사용
+            final_measurement = stats['best_q_measurement']
+            hr_final = stats['hr_mode_median']  # 빈도 높은 값의 중앙값
+            q_final = stats['q_max']  # 최고 q값
+            
+            logger.info(
+                f"✅ Measurement finalized ({reason}) | elapsed={elapsed:.1f}s | "
+                f"HR_max={stats['hr_max']:.1f} | HR_mode_median={hr_final:.1f} | "
+                f"Q_max={q_final:.2f} | measurements={stats['total_measurements']}"
+            )
+        else:
+            # 통계가 없으면 기존 best 사용
+            final_measurement = best
+            hr_final = best['hr']
+            q_final = best['q']
+            logger.info(
+                f"✅ Measurement finalized ({reason}) | elapsed={elapsed:.1f}s | "
+                f"HR={best['hr']:.1f} BPM (q={best['q']:.2f}) | RR={best['rr'] if best['rr'] is not None else '--'}"
+            )
+        
+        # 최종 측정값으로 color_rec 생성/업데이트
+        if final_measurement.get('color_rec') is None and self.therapist is not None:
+            final_measurement['color_rec'] = self.therapist.recommend(
+                ColorMetrics(
+                    hr=hr_final,
+                    q=q_final,
+                    rr=final_measurement.get('rr'),
+                    dT_nose=final_measurement.get('dT_nose'),
+                    dT_cheek=final_measurement.get('dT_cheek'),
+                    forehead_temp=final_measurement.get('forehead_temp')
+                )
+            )
+        
+        color_rec = final_measurement.get('color_rec')
         self._maybe_status(
-            best['hr'],
-            best['q'],
-            best['rr'],
-            best['dT_nose'],
-            best['dT_cheek'],
+            hr_final,
+            q_final,
+            final_measurement.get('rr'),
+            final_measurement.get('dT_nose'),
+            final_measurement.get('dT_cheek'),
             color_rec,
-            best.get('artifacts'),
+            final_measurement.get('artifacts'),
         )
-        if self.mqtt is not None and color_rec is not None and best['q'] >= self.cfg.mqtt_quality_min:
+        
+        if self.mqtt is not None and color_rec is not None and q_final >= self.cfg.mqtt_quality_min:
             try:
                 from networks.mqtt.mqtt_config import settings
                 logger.info(f"📤 MQTT 전송 시도: {settings.host}:{settings.port} | "
                            f"total={settings.topic_total} | pico={settings.pico_topic} | "
-                           f"HR={best['hr']:.1f}, Q={best['q']:.2f}")
+                           f"HR={hr_final:.1f} (max={stats.get('hr_max', hr_final):.1f}, mode_median={hr_final:.1f}), Q={q_final:.2f}")
                 self.mqtt.publish_color(color_rec, metrics={
-                    "hr": best['hr'],
-                    "rr": best['rr'],
-                    "q": best['q'],
-                    "dT_nose": best['dT_nose'],
-                    "dT_cheek": best['dT_cheek'],
-                    "forehead": best['forehead_temp'],
+                    "hr": hr_final,  # 빈도 높은 값의 중앙값
+                    "hr_max": stats.get('hr_max', hr_final),  # 최대값
+                    "rr": final_measurement.get('rr'),
+                    "q": q_final,  # 최고 q값
+                    "dT_nose": final_measurement.get('dT_nose'),
+                    "dT_cheek": final_measurement.get('dT_cheek'),
+                    "forehead": final_measurement.get('forehead_temp'),
                     "motion_px": self.motion.motion_level,
-                    "artifacts": best.get('artifacts')
+                    "artifacts": final_measurement.get('artifacts'),
+                    "session_stats": {
+                        "hr_max": stats.get('hr_max'),
+                        "hr_mode_median": stats.get('hr_mode_median'),
+                        "q_max": stats.get('q_max'),
+                        "total_measurements": stats.get('total_measurements')
+                    } if stats else None
                 }, also_pico=True)
                 logger.info(f"✅ MQTT 전송 완료: {settings.topic_total} 및 {settings.pico_topic}")
             except Exception as exc:
