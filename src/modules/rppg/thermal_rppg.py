@@ -1333,7 +1333,10 @@ class PresenceGate:
             }
             logger.warning(f"PresenceGate 실패: {reasons} | 온도정보: {temp_info}")
         elif ok and self.present and (self.pass_cnt % 60 == 0):  # 성공 시에도 주기적 로그
-            logger.info(f"PresenceGate 성공: 온도정보 fh={fh:.1f}°C, nose={nose:.1f}°C, ambient={ambient:.1f}°C")
+            fh_str = f"{fh:.1f}" if fh is not None else "--"
+            nose_str = f"{nose:.1f}" if nose is not None else "--"
+            ambient_str = f"{ambient:.1f}" if ambient is not None else "--"
+            logger.info(f"PresenceGate 성공: 온도정보 fh={fh_str}°C, nose={nose_str}°C, ambient={ambient_str}°C")
             
         return self.present, self.last_reason
 
