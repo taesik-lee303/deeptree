@@ -156,9 +156,9 @@ class ThermalrPPGConfig:
     up_scale: int = 3  # 얼굴 탐지 및 ROI 추출용 업스케일 배수 (3-6 권장, 카메라 거리에 따라 조정)
     
     # UI display parameters
-    ui_scale: float = 1.5  # 모니터링 화면 확대 배수 (1.0=기본, 1.5=1.5배, 2.0=2배 등)
-    ui_window_width: Optional[int] = None  # 창 초기 너비 (None이면 자동)
-    ui_window_height: Optional[int] = None  # 창 초기 높이 (None이면 자동)
+    ui_scale: float = 2.5  # 모니터링 화면 확대 배수 (1.0=기본, 2.0=2배, 2.5=2.5배 등)
+    ui_window_width: Optional[int] = None  # 창 초기 너비 (None이면 자동, 권장: 1280-1920)
+    ui_window_height: Optional[int] = None  # 창 초기 높이 (None이면 자동, 권장: 720-1080)
 
 
 # --------------------- AI Enhancement Classes ---------------------
@@ -1493,20 +1493,35 @@ class MonitorUI:
         
         try:
             # 창 크기 초기 설정 (첫 프레임에서만)
-            if self._window_created and not self._window_size_set and (self.window_width is not None or self.window_height is not None):
+            if self._window_created and not self._window_size_set:
                 if self.window_width is not None and self.window_height is not None:
+                    # 명시적으로 지정된 크기 사용
                     cv2.resizeWindow(self.window_name, self.window_width, self.window_height)
+                    self._window_size_set = True
                 elif self.window_width is not None:
-                    # 높이는 비율 유지
+                    # 너비만 지정된 경우, 높이는 비율 유지
                     h, w = out.shape[:2]
                     aspect = h / w
                     cv2.resizeWindow(self.window_name, self.window_width, int(self.window_width * aspect))
+                    self._window_size_set = True
                 elif self.window_height is not None:
-                    # 너비는 비율 유지
+                    # 높이만 지정된 경우, 너비는 비율 유지
                     h, w = out.shape[:2]
                     aspect = w / h
                     cv2.resizeWindow(self.window_name, int(self.window_height * aspect), self.window_height)
-                self._window_size_set = True  # 한 번만 실행
+                    self._window_size_set = True
+                else:
+                    # 창 크기가 지정되지 않은 경우, ui_scale 적용 후 실제 이미지 크기로 설정
+                    h, w = out.shape[:2]
+                    # 최소 크기 보장 (너무 작지 않도록)
+                    min_width = 800
+                    min_height = 600
+                    if w < min_width or h < min_height:
+                        scale = max(min_width / w, min_height / h)
+                        w = int(w * scale)
+                        h = int(h * scale)
+                    cv2.resizeWindow(self.window_name, w, h)
+                    self._window_size_set = True
             
             cv2.imshow(self.window_name, out)
             key = cv2.waitKey(1) & 0xFF
@@ -2277,9 +2292,9 @@ if __name__ == "__main__":
         up_scale=4,  # 기본값 4 (기존 6에서 성능 향상을 위해 낮춤)
         
         # UI Display (모니터링 화면 크기 조절)
-        ui_scale=1.5,  # 화면 확대 배수 (1.0=기본, 1.5=1.5배, 2.0=2배 등)
-        # ui_window_width=1920,  # 창 초기 너비 (선택적, None이면 자동)
-        # ui_window_height=1080,  # 창 초기 높이 (선택적, None이면 자동)
+        ui_scale=2.5,  # 화면 확대 배수 (기본값 2.5배로 증가, 더 크게 보이도록)
+        ui_window_width=1280,  # 창 초기 너비 (명시적 설정으로 더 크게 표시)
+        ui_window_height=720,  # 창 초기 높이 (명시적 설정으로 더 크게 표시)
     )
     try:
         mqtt_pub = MqttColorPublisher().connect()
