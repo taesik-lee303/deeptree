@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from collections import deque, Counter
-from typing import Tuple, Dict, Optional, Any
+from typing import Tuple, Dict, Optional, Any, List
 
 import numpy as np
 import cv2
@@ -20,6 +20,14 @@ import pickle
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("thermal_rppg")
+
+# MediaPipe for face landmarks (optional, graceful fallback)
+try:
+    import mediapipe as mp
+    MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    MEDIAPIPE_AVAILABLE = False
+    logger.warning("MediaPipe not available. Face landmark detection will be disabled.")
 
 # Absolute imports for your project layout
 # src/modules/rppg/thermal_rppg.py
@@ -157,6 +165,12 @@ class ThermalrPPGConfig:
     clahe_tile_size: int = 8  # CLAHE tile grid size
     face_temp_range: Tuple[float, float] = (26.0, 38.0)  # 얼굴 온도 검증 범위 (°C) - 확대
     enable_kcf_tracking: bool = False  # KCF 추적기 사용 (템플릿 매칭 대신)
+    
+    # Deep learning face landmark detection
+    enable_face_landmarks: bool = True  # 딥러닝 기반 얼굴 랜드마크 검출 활성화
+    landmark_model: str = "mediapipe"  # "mediapipe" or "opencv_dnn"
+    landmark_min_detection_confidence: float = 0.5  # 랜드마크 검출 최소 신뢰도
+    landmark_min_tracking_confidence: float = 0.5  # 랜드마크 추적 최소 신뢰도
     
     # ROI extraction parameters
     roi_patch_size: int = 6  # ROI 중심 패치 크기 (기본값 3 → 6으로 확대)
@@ -1291,17 +1305,217 @@ class MotionCompensator:
             return frame
 
 
+# --------------------- Face Landmark Detector ---------------------
+class FaceLandmarkDetector:
+    """
+    딥러닝 기반 얼굴 랜드마크 검출기
+    MediaPipe Face Mesh를 사용하여 이마, 코, 볼의 정확한 위치를 검출
+    """
+    def __init__(self, model: str = "mediapipe", 
+                 min_detection_confidence: float = 0.5,
+                 min_tracking_confidence: float = 0.5,
+                 enable: bool = True):
+        self.enable = enable and MEDIAPIPE_AVAILABLE
+        self.model_type = model
+        self.landmarks = None
+        self.last_landmarks = None
+        
+        if not self.enable:
+            logger.info("Face landmark detection disabled (MediaPipe not available or disabled)")
+            return
+        
+        if model == "mediapipe":
+            self.mp_face_mesh = mp.solutions.face_mesh
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                static_image_mode=False,
+                max_num_faces=1,
+                refine_landmarks=True,  # 더 정확한 랜드마크 (468개 포인트)
+                min_detection_confidence=min_detection_confidence,
+                min_tracking_confidence=min_tracking_confidence
+            )
+            logger.info("MediaPipe Face Mesh initialized for landmark detection")
+        else:
+            self.enable = False
+            logger.warning(f"Unsupported landmark model: {model}. Disabling landmark detection.")
+    
+    def detect(self, frame_u8: np.ndarray, bbox: Optional[Tuple[int, int, int, int]] = None) -> Optional[Dict[str, List[Tuple[float, float]]]]:
+        """
+        얼굴 랜드마크 검출
+        
+        Args:
+            frame_u8: uint8 형식의 전처리된 프레임 (0-255)
+            bbox: 얼굴 bounding box (x, y, w, h) - 검출 영역 제한용
+        
+        Returns:
+            랜드마크 딕셔너리 또는 None
+            {
+                'forehead': [(x1, y1), (x2, y2), ...],
+                'nose': [(x1, y1), ...],
+                'l_cheek': [(x1, y1), ...],
+                'r_cheek': [(x1, y1), ...],
+                'all': [(x1, y1), ...]  # 모든 랜드마크
+            }
+        """
+        if not self.enable:
+            return None
+        
+        try:
+            # MediaPipe는 RGB 이미지를 요구하므로 grayscale을 RGB로 변환
+            if len(frame_u8.shape) == 2:
+                frame_rgb = cv2.cvtColor(frame_u8, cv2.COLOR_GRAY2RGB)
+            else:
+                frame_rgb = frame_u8
+            
+            # bbox가 있으면 해당 영역만 검출 (성능 향상)
+            if bbox is not None:
+                x, y, w, h = bbox
+                # bbox 확장 (약간 여유 공간)
+                expand = 0.1
+                x = max(0, int(x - w * expand))
+                y = max(0, int(y - h * expand))
+                w = min(frame_rgb.shape[1] - x, int(w * (1 + 2 * expand)))
+                h = min(frame_rgb.shape[0] - y, int(h * (1 + 2 * expand)))
+                roi = frame_rgb[y:y+h, x:x+w]
+                if roi.size == 0:
+                    return None
+            else:
+                roi = frame_rgb
+                x, y = 0, 0
+            
+            # MediaPipe 랜드마크 검출
+            results = self.face_mesh.process(roi)
+            
+            if not results.multi_face_landmarks:
+                self.landmarks = None
+                return None
+            
+            # 첫 번째 얼굴의 랜드마크 추출
+            face_landmarks = results.multi_face_landmarks[0]
+            h_roi, w_roi = roi.shape[:2]
+            
+            # 모든 랜드마크 좌표 추출 (원본 프레임 좌표계로 변환)
+            all_landmarks = []
+            for landmark in face_landmarks.landmark:
+                px = int(landmark.x * w_roi) + x
+                py = int(landmark.y * h_roi) + y
+                all_landmarks.append((px, py))
+            
+            # MediaPipe Face Mesh 468 랜드마크 인덱스
+            # 참고: https://github.com/google/mediapipe/blob/master/mediapipe/modules/face_geometry/data/canonical_face_model_uv_visualization.png
+            landmark_indices = {
+                'forehead': [
+                    10, 151, 337, 9, 107, 55, 65, 52, 53, 46,  # 이마 상단
+                    285, 295, 282, 283, 276, 334, 296, 336,  # 이마 중앙
+                ],
+                'nose': [
+                    4, 6, 19, 20, 94, 125, 141, 235, 236, 3, 51, 48, 115, 131, 134, 102, 49, 220, 305, 290, 305,  # 코 전체
+                ],
+                'l_cheek': [
+                    116, 117, 118, 119, 120, 121, 126, 142, 36, 205, 206, 207, 213, 192, 147, 187,  # 왼쪽 볼
+                ],
+                'r_cheek': [
+                    345, 346, 347, 348, 349, 350, 451, 452, 266, 425, 426, 427, 411, 376, 433, 416,  # 오른쪽 볼
+                ],
+            }
+            
+            # 각 부위별 랜드마크 추출
+            landmarks_dict = {
+                'all': all_landmarks
+            }
+            
+            for name, indices in landmark_indices.items():
+                region_landmarks = []
+                for idx in indices:
+                    if 0 <= idx < len(all_landmarks):
+                        region_landmarks.append(all_landmarks[idx])
+                landmarks_dict[name] = region_landmarks
+            
+            self.landmarks = landmarks_dict
+            self.last_landmarks = landmarks_dict
+            return landmarks_dict
+            
+        except Exception as e:
+            logger.debug(f"Face landmark detection failed: {e}")
+            # 실패 시 마지막 랜드마크 사용 (연속성 유지)
+            return self.last_landmarks
+    
+    def get_roi_from_landmarks(self, landmarks: Dict[str, List[Tuple[float, float]]], 
+                               frame_shape: Tuple[int, int]) -> Dict[str, Tuple[int, int, int, int]]:
+        """
+        랜드마크로부터 ROI 영역 계산
+        
+        Args:
+            landmarks: 랜드마크 딕셔너리
+            frame_shape: 프레임 크기 (height, width)
+        
+        Returns:
+            ROI 딕셔너리: {'forehead': (x, y, w, h), ...}
+        """
+        if landmarks is None:
+            return {}
+        
+        rois = {}
+        h, w = frame_shape[:2]
+        
+        for name in ['forehead', 'nose', 'l_cheek', 'r_cheek']:
+            if name not in landmarks or len(landmarks[name]) == 0:
+                continue
+            
+            points = np.array(landmarks[name])
+            if len(points) == 0:
+                continue
+            
+            # 랜드마크 포인트들의 bounding box 계산
+            x_min = int(np.clip(np.min(points[:, 0]), 0, w - 1))
+            y_min = int(np.clip(np.min(points[:, 1]), 0, h - 1))
+            x_max = int(np.clip(np.max(points[:, 0]), 0, w - 1))
+            y_max = int(np.clip(np.max(points[:, 1]), 0, h - 1))
+            
+            # ROI 크기 계산 (약간의 여유 공간 추가)
+            margin = 0.1
+            roi_w = x_max - x_min
+            roi_h = y_max - y_min
+            
+            # 최소 크기 보장
+            min_size = 10
+            if roi_w < min_size:
+                center_x = (x_min + x_max) // 2
+                x_min = max(0, center_x - min_size // 2)
+                x_max = min(w - 1, center_x + min_size // 2)
+                roi_w = x_max - x_min
+            
+            if roi_h < min_size:
+                center_y = (y_min + y_max) // 2
+                y_min = max(0, center_y - min_size // 2)
+                y_max = min(h - 1, center_y + min_size // 2)
+                roi_h = y_max - y_min
+            
+            # 여유 공간 추가
+            margin_x = int(roi_w * margin)
+            margin_y = int(roi_h * margin)
+            x_min = max(0, x_min - margin_x)
+            y_min = max(0, y_min - margin_y)
+            x_max = min(w - 1, x_max + margin_x)
+            y_max = min(h - 1, y_max + margin_y)
+            
+            rois[name] = (x_min, y_min, x_max - x_min, y_max - y_min)
+        
+        return rois
+
+
 # --------------------- ROI Manager ---------------------
 class ROIManager:
     def __init__(self, patch_size: int = 6, use_weighted_mean: bool = True, 
                  center_weight: float = 0.9, dynamic_positioning: bool = True,
-                 use_center_only: bool = False):
+                 use_center_only: bool = False,
+                 landmark_detector: Optional[FaceLandmarkDetector] = None):
         self.buffers: Dict[str, deque] = {}
         self.patch_size = patch_size
         self.use_weighted_mean = use_weighted_mean
         self.center_weight = center_weight
         self.dynamic_positioning = dynamic_positioning
         self.use_center_only = use_center_only
+        self.landmark_detector = landmark_detector
 
     def _find_face_center_from_temp(self, frame: np.ndarray, bbox) -> Tuple[float, float]:
         """온도 분포를 기반으로 얼굴 중심 위치 찾기 (원형/타원형 고려)"""
@@ -1365,7 +1579,16 @@ class ROIManager:
         
         return rx, ry, rw, rh
 
-    def extract(self, frame: np.ndarray, bbox, patch=None):
+    def extract(self, frame: np.ndarray, bbox, frame_u8: Optional[np.ndarray] = None, patch=None):
+        """
+        ROI 추출 (랜드마크 기반 또는 고정 비율 기반)
+        
+        Args:
+            frame: 열화상 프레임 (온도 데이터)
+            bbox: 얼굴 bounding box
+            frame_u8: 전처리된 uint8 프레임 (랜드마크 검출용, 선택적)
+            patch: 패치 크기
+        """
         if bbox is None:
             return {}, {}
         if patch is None:
@@ -1373,10 +1596,22 @@ class ROIManager:
         
         x, y, w, h = bbox
         
+        # 랜드마크 기반 ROI 추출 시도
+        landmark_rois = {}
+        if self.landmark_detector is not None and self.landmark_detector.enable and frame_u8 is not None:
+            try:
+                landmarks = self.landmark_detector.detect(frame_u8, bbox)
+                if landmarks is not None:
+                    landmark_rois = self.landmark_detector.get_roi_from_landmarks(landmarks, frame.shape)
+                    if landmark_rois:
+                        logger.debug(f"랜드마크 기반 ROI 추출 성공: {list(landmark_rois.keys())}")
+            except Exception as e:
+                logger.debug(f"랜드마크 기반 ROI 추출 실패, 고정 비율 방식 사용: {e}")
+        
         # 얼굴 중심 찾기 (온도 분포 기반)
         face_center_x, face_center_y = self._find_face_center_from_temp(frame, bbox)
         
-        # 기본 ROI 위치 (기존 방식)
+        # 기본 ROI 위치 (기존 방식 - fallback)
         base_rois = {
             'forehead': (x + 0.25*w, y + 0.05*h, 0.5*w, 0.22*h),
             'l_cheek': (x + 0.05*w, y + 0.45*h, 0.28*w, 0.28*h),
@@ -1388,8 +1623,12 @@ class ROIManager:
         vals = {}
         
         for name, base_roi in base_rois.items():
-            # 동적 위치 조정
-            rx, ry, rw, rh = self._adjust_roi_position(frame, bbox, base_roi, face_center_x, face_center_y)
+            # 랜드마크 기반 ROI가 있으면 우선 사용, 없으면 고정 비율 사용
+            if name in landmark_rois:
+                rx, ry, rw, rh = landmark_rois[name]
+            else:
+                # 동적 위치 조정 (고정 비율 기반)
+                rx, ry, rw, rh = self._adjust_roi_position(frame, bbox, base_roi, face_center_x, face_center_y)
             
             # 프레임 범위 내로 클리핑
             rx = max(0, min(rx, frame.shape[1]-1))
@@ -1824,12 +2063,22 @@ class ThermalrPPG:
         )
         self.motion = MotionCompensator()
         self.motion.mc_stride = cfg.mc_stride
+        
+        # 얼굴 랜드마크 검출기 초기화
+        self.landmark_detector = FaceLandmarkDetector(
+            model=cfg.landmark_model,
+            min_detection_confidence=cfg.landmark_min_detection_confidence,
+            min_tracking_confidence=cfg.landmark_min_tracking_confidence,
+            enable=cfg.enable_face_landmarks
+        ) if cfg.enable_face_landmarks else None
+        
         self.roi = ROIManager(
             patch_size=cfg.roi_patch_size,
             use_weighted_mean=cfg.roi_use_weighted_mean,
             center_weight=cfg.roi_center_weight,
             dynamic_positioning=cfg.roi_dynamic_positioning,
-            use_center_only=cfg.roi_use_center_only
+            use_center_only=cfg.roi_use_center_only,
+            landmark_detector=self.landmark_detector
         )
         self.proc = SignalProc(cfg.sampling_rate, band=cfg.target_hr_range)
         self.resp = RespEstimator(cfg.sampling_rate)
@@ -2688,7 +2937,16 @@ class ThermalrPPG:
                             logger.debug("Motion compensation 실패, 원본 프레임 사용")
 
                 # -------- PresenceGate BEFORE appending --------
-                roi_vals, roi_boxes = self.roi.extract(up, bbox)
+                # 랜드마크 검출을 위한 전처리된 프레임 얻기
+                frame_u8_for_landmarks = None
+                if self.landmark_detector is not None and self.landmark_detector.enable and bbox is not None:
+                    try:
+                        # detector의 전처리 파이프라인을 통해 frame_u8 얻기
+                        frame_u8_for_landmarks, _ = self.detector._preprocess_frame(up, face_bbox=bbox)
+                    except Exception as e:
+                        logger.debug(f"전처리된 프레임 획득 실패: {e}")
+                
+                roi_vals, roi_boxes = self.roi.extract(up, bbox, frame_u8=frame_u8_for_landmarks)
                 ambient_val = self._ambient_from_frame(up, bbox)
 
                 fh_inst = roi_vals.get('forehead') if roi_vals else None

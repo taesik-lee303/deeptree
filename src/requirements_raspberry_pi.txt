@@ -35,6 +35,9 @@ PyWavelets>=1.1.0,<1.4.0
 # OpenCV (컴퓨터 비전, 열화상 처리)
 opencv-python>=4.5.0,<4.9.0
 
+# MediaPipe (얼굴 랜드마크 검출 - 선택적)
+mediapipe>=0.10.0,<0.11.0
+
 # Pygame (원형 디스플레이용)
 pygame>=2.0.0,<2.6.0
 
