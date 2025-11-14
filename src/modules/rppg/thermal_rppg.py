@@ -139,7 +139,7 @@ class ThermalrPPGConfig:
     session_max_duration: float = 70.0   # 한 세션 최대 유지 시간 (초)
     session_quality_target: float = 0.55 # 최종 확정에 필요한 품질
     session_quality_min: float = 0.45    # 후보로 인정되는 최소 품질
-    session_roi_quality_min: float = 0.35
+    session_roi_quality_min: float = 0.25  # 품질 기준 완화 (0.35 → 0.25) - 신호 약할 때도 측정 가능
     session_roi_max_count: int = 2
     
     # Face detection enhancement parameters
@@ -155,8 +155,9 @@ class ThermalrPPGConfig:
     # ROI extraction parameters
     roi_patch_size: int = 6  # ROI 중심 패치 크기 (기본값 3 → 6으로 확대)
     roi_use_weighted_mean: bool = True  # ROI 전체 평균과 중심 패치 가중 평균 사용
-    roi_center_weight: float = 0.7  # 중심 패치 가중치 (0.7 = 중심 70% + 전체 30%)
+    roi_center_weight: float = 0.9  # 중심 패치 가중치 (0.9 = 중심 90% + 전체 10%) - 신호 강조
     roi_dynamic_positioning: bool = True  # 온도 분포 기반 ROI 위치 동적 조정
+    roi_use_center_only: bool = False  # True면 중심 패치만 사용 (가중 평균 대신)
     
     # Upscaling parameters
     up_scale: int = 3  # 얼굴 탐지 및 ROI 추출용 업스케일 배수 (3-6 권장, 카메라 거리에 따라 조정)
@@ -1192,12 +1193,14 @@ class MotionCompensator:
 # --------------------- ROI Manager ---------------------
 class ROIManager:
     def __init__(self, patch_size: int = 6, use_weighted_mean: bool = True, 
-                 center_weight: float = 0.7, dynamic_positioning: bool = True):
+                 center_weight: float = 0.9, dynamic_positioning: bool = True,
+                 use_center_only: bool = False):
         self.buffers: Dict[str, deque] = {}
         self.patch_size = patch_size
         self.use_weighted_mean = use_weighted_mean
         self.center_weight = center_weight
         self.dynamic_positioning = dynamic_positioning
+        self.use_center_only = use_center_only
 
     def _find_face_center_from_temp(self, frame: np.ndarray, bbox) -> Tuple[float, float]:
         """온도 분포를 기반으로 얼굴 중심 위치 찾기 (원형/타원형 고려)"""
@@ -1303,17 +1306,22 @@ class ROIManager:
             y0, y1 = max(0, cy-patch), min(rh, cy+patch+1)
             patch_arr = region[y0:y1, x0:x1]
             
-            # 값 계산: 가중 평균 또는 중심 패치만
-            if self.use_weighted_mean and patch_arr.size > 0:
+            # 값 계산: 중심 패치만, 가중 평균, 또는 전체 평균
+            if patch_arr.size > 0:
                 center_mean = float(np.mean(patch_arr))
-                region_mean = float(np.mean(region))
-                # 가중 평균 (중심 70%, 전체 30%)
-                vals[name] = self.center_weight * center_mean + (1.0 - self.center_weight) * region_mean
-            else:
-                if patch_arr.size > 0:
-                    vals[name] = float(np.mean(patch_arr))
+                if self.use_center_only:
+                    # 중심 패치만 사용 (신호 강조)
+                    vals[name] = center_mean
+                elif self.use_weighted_mean:
+                    region_mean = float(np.mean(region))
+                    # 가중 평균 (중심 90%, 전체 10% - 신호 강조)
+                    vals[name] = self.center_weight * center_mean + (1.0 - self.center_weight) * region_mean
                 else:
-                    vals[name] = float(np.mean(region))
+                    # 중심 패치만 사용 (기본)
+                    vals[name] = center_mean
+            else:
+                # 패치가 없으면 전체 영역 평균
+                vals[name] = float(np.mean(region))
             
             rois[name] = (rx, ry, rw, rh)
         
@@ -1719,7 +1727,8 @@ class ThermalrPPG:
             patch_size=cfg.roi_patch_size,
             use_weighted_mean=cfg.roi_use_weighted_mean,
             center_weight=cfg.roi_center_weight,
-            dynamic_positioning=cfg.roi_dynamic_positioning
+            dynamic_positioning=cfg.roi_dynamic_positioning,
+            use_center_only=cfg.roi_use_center_only
         )
         self.proc = SignalProc(cfg.sampling_rate, band=cfg.target_hr_range)
         self.resp = RespEstimator(cfg.sampling_rate)
@@ -1851,8 +1860,16 @@ class ThermalrPPG:
             hr, conf, snr, harm = self.proc.hr_fft(x)
             if hr is not None:
                 hrs.append(hr); qs.append(conf); snrs.append(snr); harms.append(harm); names.append(name)
+            else:
+                # 디버깅: HR이 None인 이유 로그
+                signal_std = float(np.std(x)) if len(x) > 0 else 0.0
+                signal_mean = float(np.mean(x)) if len(x) > 0 else 0.0
+                logger.debug(f"ROI {name}: HR=None, 신호 std={signal_std:.4f}, mean={signal_mean:.4f}, 길이={len(x)}")
 
         if not hrs:
+            # 디버깅: 왜 HR이 없는지 로그
+            buffer_lengths = {name: len(self.buffers.get(name, [])) for name in ['forehead', 'l_cheek', 'r_cheek', 'nose']}
+            logger.debug(f"HR 계산 실패: 버퍼 길이={buffer_lengths}, 필요={need}")
             return None, 0.0, {}
 
         # 품질 보정(모션/발한)
@@ -1872,7 +1889,15 @@ class ThermalrPPG:
         # 품질 기준 이하 ROI 제거 및 상위 ROI만 활용
         quality_idx = [i for i, q_val in enumerate(q_arr) if q_val >= self.cfg.session_roi_quality_min]
         if not quality_idx:
-            return None, 0.0, {}
+            # 품질 기준 미달 시에도 최고 품질 ROI 사용 (디버깅용)
+            if len(q_arr) > 0:
+                best_idx = int(np.argmax(q_arr))
+                max_q = float(q_arr[best_idx])
+                logger.debug(f"품질 기준 미달 (최고={max_q:.3f} < {self.cfg.session_roi_quality_min}), 최고 품질 ROI 사용: {names_arr[best_idx]}")
+                quality_idx = [best_idx]
+            else:
+                logger.debug(f"HR 계산 실패: 모든 ROI 품질 기준 미달")
+                return None, 0.0, {}
         quality_idx = sorted(quality_idx, key=lambda i: q_arr[i], reverse=True)
         if self.cfg.session_roi_max_count > 0:
             quality_idx = quality_idx[:self.cfg.session_roi_max_count]
