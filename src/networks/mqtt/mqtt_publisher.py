@@ -52,7 +52,17 @@ class MqttColorPublisher:
         except Exception:
             pass
 
-    def publish_color(self, rec, metrics: Optional[Dict[str, Any]] = None, throttle: bool = True, also_pico: bool = False):
+    def publish_color(self, rec, metrics: Optional[Dict[str, Any]] = None, throttle: bool = True, also_pico: bool = False, to_status: bool = False):
+        """
+        Publish color therapy recommendation to MQTT.
+        
+        Args:
+            rec: Color recommendation object
+            metrics: Optional metrics dictionary
+            throttle: Whether to throttle duplicate messages
+            also_pico: Whether to also publish to Pico topic
+            to_status: If True, publish to topic_status (real-time). If False, publish to topic_total (session end).
+        """
         now = time.time()
         key = (tuple(rec.rgb_primary), round(float(rec.intensity), 2), rec.mode)
         if throttle and self._last_key == key and (now - self._last_pub_ts) < self.min_interval:
@@ -69,17 +79,21 @@ class MqttColorPublisher:
             "metrics": metrics or {},
             "ts": int(now)
         }
+        
+        # 토픽 선택: to_status가 True면 status, False면 total
+        topic = settings.topic_status if to_status else settings.topic_total
+        
         try:
-            result = self.client.publish(settings.topic_total, json.dumps(rich), qos=1, retain=False)
+            result = self.client.publish(topic, json.dumps(rich), qos=1, retain=False)
             if result.rc == 0:
                 import logging
-                logging.getLogger(__name__).debug(f"MQTT published to {settings.topic_total}: {len(json.dumps(rich))} bytes")
+                logging.getLogger(__name__).debug(f"MQTT published to {topic}: {len(json.dumps(rich))} bytes")
             else:
                 import logging
-                logging.getLogger(__name__).warning(f"MQTT publish failed to {settings.topic_total}: rc={result.rc}")
+                logging.getLogger(__name__).warning(f"MQTT publish failed to {topic}: rc={result.rc}")
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"MQTT publish exception to {settings.topic_total}: {e}")
+            logging.getLogger(__name__).error(f"MQTT publish exception to {topic}: {e}")
 
         if also_pico and settings.pico_topic:
             try:

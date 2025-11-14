@@ -141,9 +141,10 @@ class ThermalrPPGConfig:
     session_quality_min: float = 0.45    # 후보로 인정되는 최소 품질
     session_roi_quality_min: float = 0.25  # 품질 기준 완화 (0.35 → 0.25) - 신호 약할 때도 측정 가능
     session_roi_max_count: int = 2
+    session_absent_timeout: float = 10.0  # 얼굴이 안 보여도 세션 유지할 시간 (초) - 이 시간 동안은 리셋 안 함
     
     # Real-time MQTT publishing (세션 완료 전에도 주기적으로 전송)
-    enable_realtime_mqtt: bool = True     # 실시간 MQTT 전송 활성화
+    enable_realtime_mqtt: bool = True     # 실시간 MQTT 전송 활성화 (status 토픽으로 전송)
     realtime_mqtt_interval: float = 5.0  # 실시간 전송 주기 (초)
     realtime_mqtt_quality_min: float = 0.3  # 실시간 전송 최소 품질
     
@@ -813,6 +814,19 @@ class ThermalFaceDetector:
     def _score_components(self, frame, stats, cents, cx_img, cy_img):
         best_idx, best_score = -1, -1e9
         H, W = frame.shape
+        
+        # 이전 bbox가 있으면 연속성 체크를 위한 기준 설정
+        last_bbox = self.last_bbox
+        if last_bbox is not None:
+            lx, ly, lw, lh = last_bbox
+            last_center_x = lx + lw / 2
+            last_center_y = ly + lh / 2
+            last_area = lw * lh
+        else:
+            last_center_x = None
+            last_center_y = None
+            last_area = None
+        
         for i in range(1, stats.shape[0]):
             x, y, bw, bh, area = stats[i]
             if area < (H*W)*self.min_area_frac or area > (H*W)*self.max_area_frac:
@@ -823,14 +837,49 @@ class ThermalFaceDetector:
             cx, cy = cents[i]
             region = frame[y:y+bh, x:x+bw]
             temp_score = float(np.mean(region))
+            
+            # 연속성 체크: 이전 bbox와 크게 다르면 페널티
+            continuity_penalty = 0.0
+            if last_center_x is not None and last_center_y is not None and last_area is not None:
+                # 위치 변화 체크
+                center_dist = np.hypot(cx - last_center_x, cy - last_center_y)
+                max_allowed_dist = np.hypot(lw, lh) * 1.5  # 이전 bbox 대각선의 1.5배
+                if center_dist > max_allowed_dist:
+                    continuity_penalty = -1000.0  # 너무 멀리 떨어진 경우 큰 페널티
+                
+                # 크기 변화 체크
+                area_ratio = area / last_area if last_area > 0 else 1.0
+                if area_ratio < 0.3 or area_ratio > 3.0:  # 크기가 3배 이상 변하면 의심
+                    continuity_penalty = -500.0
+            
             center_score = -((cx - cx_img)**2 + (cy - cy_img)**2)
             top_bonus = -abs(cy - (H*self.top_bias)) * 0.5
-            score = 1.2*temp_score + 0.002*area + 0.002*center_score + top_bonus
+            
+            # 온도 점수 가중치를 낮추고 위치/크기 점수를 높임 (다른 열원 오인식 방지)
+            score = 0.8*temp_score + 0.003*area + 0.005*center_score + top_bonus + continuity_penalty
+            
             if score > best_score:
                 best_score, best_idx = score, i
+        
         if best_idx < 1:
             return None
         x, y, bw, bh, _ = stats[best_idx]
+        
+        # 연속성 최종 검증: 이전 bbox와 너무 다르면 무시
+        if last_bbox is not None:
+            lx, ly, lw, lh = last_bbox
+            new_center_x = x + bw / 2
+            new_center_y = y + bh / 2
+            last_center_x = lx + lw / 2
+            last_center_y = ly + lh / 2
+            center_dist = np.hypot(new_center_x - last_center_x, new_center_y - last_center_y)
+            max_allowed_dist = np.hypot(lw, lh) * 2.0  # 이전 bbox 대각선의 2배
+            
+            if center_dist > max_allowed_dist:
+                logger.warning(f"⚠️ bbox 위치 급변 감지: 이전=({lx},{ly},{lw},{lh}), 새=({x},{y},{bw},{bh}), 거리={center_dist:.1f}px")
+                # 이전 bbox 유지 (None 반환하면 이전 bbox가 유지됨)
+                return None
+        
         pad = 0.12
         x = max(0, int(x - bw * pad))
         y = max(0, int(y - bh * pad))
@@ -894,7 +943,8 @@ class ThermalFaceDetector:
     
     def _validate_face_temperature(self, frame: np.ndarray, bbox) -> bool:
         """
-        온도 기반 얼굴 검증 (문서 권장: 28-35°C 범위)
+        온도 기반 얼굴 검증 강화: 얼굴의 온도 분포 패턴 검증
+        얼굴은 이마 부분이 가장 뜨거우며, 균일하지 않은 온도 분포를 가짐
         """
         if bbox is None:
             return False
@@ -916,15 +966,41 @@ class ThermalFaceDetector:
         mean_temp = float(np.mean(roi_temps))
         temp_min, temp_max = self.face_temp_range
         
-        # 얼굴 온도 범위 검증
-        is_valid = temp_min <= mean_temp <= temp_max
+        # 1. 기본 온도 범위 검증
+        if not (temp_min <= mean_temp <= temp_max):
+            return False
         
-        # 추가: 핫 픽셀 비율 체크 (30°C 이상 픽셀 비율)
+        # 2. 핫 픽셀 비율 체크 (30°C 이상 픽셀 비율)
         hot_pixels = np.sum(roi_temps > 30.0)
         hot_ratio = hot_pixels / roi_temps.size if roi_temps.size > 0 else 0.0
+        if hot_ratio < 0.1:
+            return False
         
-        # 온도 범위 내이고, 적절한 핫 픽셀 비율이면 유효
-        return is_valid and hot_ratio > 0.1
+        # 3. 얼굴 온도 분포 패턴 검증 (이마가 상대적으로 뜨거워야 함)
+        # 상단 1/3 영역(이마 영역)과 하단 2/3 영역의 온도 차이 체크
+        top_third = int(h / 3)
+        if top_third > 0 and h - top_third > 0:
+            top_region = roi_temps[0:top_third, :]
+            bottom_region = roi_temps[top_third:, :]
+            
+            if top_region.size > 0 and bottom_region.size > 0:
+                top_mean = float(np.mean(top_region))
+                bottom_mean = float(np.mean(bottom_region))
+                temp_diff = top_mean - bottom_mean
+                
+                # 얼굴은 이마가 약간 더 뜨거운 경향 (0.2~1.5°C 차이)
+                # 너무 균일하거나(차이가 없음) 반대 패턴이면 의심
+                if temp_diff < -0.5 or temp_diff > 2.0:
+                    logger.debug(f"⚠️ 얼굴 온도 분포 패턴 이상: 상단={top_mean:.1f}°C, 하단={bottom_mean:.1f}°C, 차이={temp_diff:.2f}°C")
+                    return False
+        
+        # 4. 온도 분산 체크: 얼굴은 어느 정도 온도 변화가 있어야 함
+        temp_std = float(np.std(roi_temps))
+        if temp_std < 0.3:  # 너무 균일하면 의심 (다른 열원일 가능성)
+            logger.debug(f"⚠️ 얼굴 온도 분산 너무 낮음: std={temp_std:.2f}°C (의심: 균일한 열원)")
+            return False
+        
+        return True
     
     def _threshold(self, frame):
         ambient = float(np.median(frame))
@@ -1172,6 +1248,15 @@ class MotionCompensator:
             self.last_warp = out
             return out
         x, y, w, h = bbox
+        # bbox 범위 검증
+        H, W = frame.shape[:2]
+        x = max(0, min(x, W - 1))
+        y = max(0, min(y, H - 1))
+        w = min(w, W - x)
+        h = min(h, H - y)
+        if w <= 0 or h <= 0:
+            return frame
+        
         roi = frame[y:y+h, x:x+w]
         if self.ref is None:
             self.ref = roi.copy()
@@ -1184,14 +1269,25 @@ class MotionCompensator:
             M = np.eye(2, 3, dtype=np.float32)
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 1e-4)
             _, M = cv2.findTransformECC(ref_f, roi_f, M, cv2.MOTION_AFFINE, criteria)
+            
+            # 변환 행렬 검증 (과도한 변환 방지)
+            motion_magnitude = float(np.hypot(M[0, 2], M[1, 2]))
+            if motion_magnitude > 50.0:  # 과도한 움직임 감지
+                logger.debug(f"⚠️ Motion compensation 과도한 움직임 감지 ({motion_magnitude:.1f}px). 변환 무시")
+                return frame
+            
             out = cv2.warpAffine(frame, M, (frame.shape[1], frame.shape[0]),
                                  flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
             self.M = M
-            self.ref = 0.9 * self.ref + 0.1 * out[y:y+h, x:x+w]
+            # ROI 범위 재검증 후 업데이트
+            roi_compensated = out[y:y+h, x:x+w]
+            if roi_compensated.size > 0:
+                self.ref = 0.9 * self.ref + 0.1 * roi_compensated
             self.last_warp = out
-            self.motion_level = float(np.hypot(M[0, 2], M[1, 2]))
+            self.motion_level = motion_magnitude
             return out
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Motion compensation 실패: {e}")
             return frame
 
 
@@ -1762,6 +1858,7 @@ class ThermalrPPG:
 
         self._hr_next_ts = 0.0
         self._rr_next_ts = 0.0
+        self._last_rr: Optional[float] = None  # 최신 RR 값 유지
         self._last_status = {'ts': 0.0, 'hr': None, 'rr': None, 'q': None, 'dtn': None, 'dtc': None}
         self._persp_until = 0.0
         self._ambient_ema = None
@@ -1791,6 +1888,7 @@ class ThermalrPPG:
         self.session_active = False
         self.session_reported = False
         self.session_start_ts = 0.0
+        self.session_last_present_ts: float = 0.0  # 마지막으로 얼굴이 감지된 시간
         self.session_best: Optional[Dict[str, Any]] = None
         self.session_measurements: list = []  # 세션 동안 모든 측정값 저장
 
@@ -2032,6 +2130,7 @@ class ThermalrPPG:
         self.session_active = True
         self.session_reported = False
         self.session_start_ts = time.time()
+        self.session_last_present_ts = time.time()  # 세션 시작 시 얼굴 감지 시간 기록
         self.session_best = None
         self.session_measurements = []  # 세션 측정값 초기화
         logger.info("Measurement session started")
@@ -2042,6 +2141,7 @@ class ThermalrPPG:
         self.session_active = False
         self.session_reported = False
         self.session_start_ts = 0.0
+        self.session_last_present_ts = 0.0
         self.session_best = None
         self.session_measurements = []
 
@@ -2083,6 +2183,15 @@ class ThermalrPPG:
                         self.session_best['artifacts'] = candidate['artifacts']
                     if candidate['color_rec'] is not None and not self.session_best.get('color_rec'):
                         self.session_best['color_rec'] = candidate['color_rec']
+        elif self.session_active:
+            # 측정값이 저장되지 않는 이유 로깅 (주기적으로만)
+            if int(elapsed) % 5 == 0:  # 5초마다 로그
+                if hr is None:
+                    logger.debug(f"🔍 측정값 저장 실패: HR=None")
+                elif hr <= 60.0:
+                    logger.debug(f"🔍 측정값 저장 실패: HR={hr:.1f} <= 60.0")
+                elif q < self.cfg.session_quality_min:
+                    logger.debug(f"🔍 측정값 저장 실패: Q={q:.2f} < {self.cfg.session_quality_min}")
 
         if self.session_reported:
             return
@@ -2241,6 +2350,11 @@ class ThermalrPPG:
             if measurement is None:
                 continue
             
+            # RR이 None이면 최신 RR 값 사용
+            if measurement.get('rr') is None and self._last_rr is not None:
+                measurement['rr'] = self._last_rr
+                logger.debug(f"📊 {description}: RR이 None이어서 최신 RR 값({self._last_rr:.1f}) 사용")
+            
             # color_rec 생성/업데이트
             if measurement.get('color_rec') is None and self.therapist is not None:
                 measurement['color_rec'] = self.therapist.recommend(
@@ -2293,7 +2407,7 @@ class ThermalrPPG:
                             "q_max": stats.get('q_max') if stats else None,
                             "total_measurements": stats.get('total_measurements') if stats else 0
                         }
-                    }, also_pico=True)
+                    }, also_pico=True, to_status=False)  # 세션 종료는 total 토픽으로
                     logger.info(f"✅ MQTT 전송 완료 ({description}): {settings.topic_total} 및 {settings.pico_topic}")
                 except Exception as exc:
                     logger.error(f"❌ MQTT publish failed ({description}): {exc}", exc_info=True)
@@ -2370,13 +2484,14 @@ class ThermalrPPG:
         
         # 품질 체크
         if q < self.cfg.realtime_mqtt_quality_min:
+            logger.debug(f"🔍 실시간 MQTT 전송 스킵: 품질 부족 (q={q:.2f} < {self.cfg.realtime_mqtt_quality_min})")
             return
         
         # 주기 체크
         if now - self._last_realtime_mqtt_ts < self.cfg.realtime_mqtt_interval:
             return
         
-        # MQTT 전송
+        # MQTT 전송 (실시간 status 토픽으로)
         if self.mqtt is not None:
             try:
                 from networks.mqtt.mqtt_config import settings
@@ -2392,9 +2507,9 @@ class ThermalrPPG:
                     "measurement_type": "realtime",  # 실시간 전송임을 표시
                     "session_active": self.session_active,
                     "session_elapsed": time.time() - self.session_start_ts if self.session_start_ts else 0.0
-                }, also_pico=True)
+                }, also_pico=True, to_status=True)  # 실시간은 status 토픽으로
                 self._last_realtime_mqtt_ts = now
-                logger.info(f"📤 실시간 MQTT 전송: HR={hr:.1f} BPM, Q={q:.2f}, RR={rr:.1f if rr else '--'} brpm | "
+                logger.info(f"📤 실시간 MQTT 전송 (status): HR={hr:.1f} BPM, Q={q:.2f}, RR={rr:.1f if rr else '--'} brpm | "
                            f"세션 진행: {time.time() - self.session_start_ts:.1f}s" if self.session_start_ts else "세션 미시작")
             except Exception as exc:
                 logger.error(f"❌ 실시간 MQTT 전송 실패: {exc}", exc_info=True)
@@ -2523,9 +2638,54 @@ class ThermalrPPG:
                 # Detect + optional motion compensation
                 bbox = self.detector.detect(up)
                 tracking_ok = bbox is not None and self.detector.missed == 0
+                
+                # bbox 안정성 체크 및 로깅
+                if bbox is not None:
+                    x, y, w, h = bbox
+                    # bbox 크기 검증 (너무 작거나 크면 의심)
+                    H, W = up.shape[:2]
+                    bbox_area = w * h
+                    frame_area = H * W
+                    area_ratio = bbox_area / frame_area if frame_area > 0 else 0
+                    
+                    if area_ratio < 0.01 or area_ratio > 0.8:  # 프레임의 1% 미만이거나 80% 초과
+                        logger.warning(f"⚠️ 비정상적인 bbox 크기 감지: {bbox} (area_ratio={area_ratio:.3f})")
+                        bbox = None  # 비정상적인 bbox 무시
+                    elif self.detector.missed > 5:  # 연속 실패가 많으면
+                        logger.warning(f"⚠️ 얼굴 추적 불안정 (missed={self.detector.missed})")
+                    
+                    # 이전 bbox와의 연속성 최종 검증
+                    if bbox is not None and self.detector.last_bbox is not None:
+                        lx, ly, lw, lh = self.detector.last_bbox
+                        # 위치 급변 체크
+                        center_dist = np.hypot((x + w/2) - (lx + lw/2), (y + h/2) - (ly + lh/2))
+                        max_dist = np.hypot(lw, lh) * 1.5
+                        if center_dist > max_dist:
+                            logger.warning(f"⚠️ bbox 위치 급변: 거리={center_dist:.1f}px > {max_dist:.1f}px. 이전 bbox 유지")
+                            bbox = self.detector.last_bbox  # 이전 bbox 유지
+                
+                # Motion compensation 적용 (bbox는 원본 유지, 프레임만 변환)
+                # 얼굴이 안정적으로 감지되고 연속적으로 추적되고 있을 때만 활성화
+                motion_compensated = False
                 if self.cfg.enable_motion_compensation and bbox is not None:
-                    up = self.motion.compensate(up, bbox)
-                    up_lr = self.motion.compensate(up_lr, bbox)
+                    # 얼굴 추적 안정성 체크: 연속 실패가 적고, 이전 bbox와 연속성이 있을 때만
+                    is_stable = (self.detector.missed <= 2) and (self.detector.last_bbox is not None)
+                    
+                    if not is_stable:
+                        # 얼굴 추적이 불안정하면 motion compensation 비활성화
+                        logger.debug(f"Motion compensation 비활성화: 얼굴 추적 불안정 (missed={self.detector.missed})")
+                    elif self.motion.motion_level > 50.0:  # 과도한 움직임 감지 시 비활성화
+                        logger.warning(f"⚠️ 과도한 움직임 감지 (motion_level={self.motion.motion_level:.1f}). Motion compensation 일시 비활성화")
+                    else:
+                        up_compensated = self.motion.compensate(up, bbox)
+                        up_lr_compensated = self.motion.compensate(up_lr, bbox)
+                        # Motion compensation이 성공적으로 적용되었는지 확인
+                        if up_compensated is not None and up_lr_compensated is not None:
+                            up = up_compensated
+                            up_lr = up_lr_compensated
+                            motion_compensated = True
+                        else:
+                            logger.debug("Motion compensation 실패, 원본 프레임 사용")
 
                 # -------- PresenceGate BEFORE appending --------
                 roi_vals, roi_boxes = self.roi.extract(up, bbox)
@@ -2562,12 +2722,28 @@ class ThermalrPPG:
                 art_txt = ",".join(artifacts) if artifacts else None
 
                 if present and not self._was_present:
-                    self._start_session()
+                    self._start_session()  # 여기서 session_last_present_ts가 설정됨
+                elif present:
+                    # 얼굴이 계속 보이면 마지막 감지 시간 업데이트
+                    self.session_last_present_ts = time.time()
                 elif not present and self._was_present:
-                    if self.session_active and not self.session_reported and self.session_best and \
-                            self.session_best.get('q', 0.0) >= self.cfg.session_quality_target:
-                        self._finalize_session("presence_lost")
-                    self._reset_session()
+                    # 얼굴이 사라졌을 때
+                    if self.session_active:
+                        # 세션 타임아웃 체크 (얼굴이 안 보여도 일정 시간은 세션 유지)
+                        absent_duration = time.time() - self.session_last_present_ts
+                        if absent_duration >= self.cfg.session_absent_timeout:
+                            # 타임아웃 초과 시 세션 종료 또는 리셋
+                            if not self.session_reported and self.session_best and \
+                                    self.session_best.get('q', 0.0) >= self.cfg.session_quality_target:
+                                self._finalize_session("presence_lost")
+                            self._reset_session()
+                            logger.info(f"세션 리셋: 얼굴 미감지 {absent_duration:.1f}초 경과 (타임아웃: {self.cfg.session_absent_timeout:.1f}초)")
+                        else:
+                            # 타임아웃 전이면 세션 유지 (리셋 안 함)
+                            logger.debug(f"세션 유지: 얼굴 미감지 {absent_duration:.1f}초 (타임아웃: {self.cfg.session_absent_timeout:.1f}초)")
+                    else:
+                        # 세션이 비활성화되어 있으면 리셋
+                        self._reset_session()
                 self._was_present = present
 
                 # Compute vitals (throttled)
@@ -2586,9 +2762,15 @@ class ThermalrPPG:
                 if now >= self._rr_next_ts:
                     rr, rrq = self._compute_rr()
                     self._rr_next_ts = now + self.cfg.rr_period
+                    # 최신 RR 값 저장
+                    if rr is not None:
+                        self._last_rr = rr
                     # 첫 RR 측정 시간 기록
                     if rr is not None and self.fast_mode.is_active:
                         self.fast_mode.record_first_rr()
+                else:
+                    # RR 계산 주기가 아니면 최신 RR 값 사용
+                    rr = self._last_rr
 
                 dT_nose, dT_cheek, fh_temp = self._compute_dT(win_sec=5)
 
@@ -2626,6 +2808,16 @@ class ThermalrPPG:
                 # Real-time MQTT publishing (세션 완료 전에도 주기적으로 전송)
                 if self.cfg.enable_realtime_mqtt and present and hr is not None and color_rec is not None:
                     self._maybe_realtime_mqtt(hr, q, rr, dT_nose, dT_cheek, fh_temp, color_rec, art_txt)
+                elif self.cfg.enable_realtime_mqtt:
+                    # MQTT 전송 실패 원인 디버깅
+                    if not present:
+                        logger.debug(f"🔍 실시간 MQTT 전송 실패: 얼굴 미감지 (present=False)")
+                    elif hr is None:
+                        logger.debug(f"🔍 실시간 MQTT 전송 실패: HR 값 없음")
+                    elif color_rec is None:
+                        logger.debug(f"🔍 실시간 MQTT 전송 실패: color_rec 없음")
+                    elif q < self.cfg.realtime_mqtt_quality_min:
+                        logger.debug(f"🔍 실시간 MQTT 전송 실패: 품질 부족 (q={q:.2f} < {self.cfg.realtime_mqtt_quality_min})")
 
                 # UI
                 if self.monitor is not None:
