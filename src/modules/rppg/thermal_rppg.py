@@ -2091,8 +2091,9 @@ class ThermalrPPG:
         if int(elapsed) % 10 == 0 and elapsed > 0:
             best_q = self.session_best.get('q', 0.0) if self.session_best else 0.0
             best_hr = self.session_best.get('hr') if self.session_best else None
+            best_hr_str = f"{best_hr:.1f}" if best_hr is not None else "None"
             logger.info(f"📊 세션 진행 중: elapsed={elapsed:.1f}s / {self.cfg.session_max_duration:.1f}s | "
-                       f"best_HR={best_hr:.1f if best_hr else 'None'}, best_Q={best_q:.2f} | "
+                       f"best_HR={best_hr_str}, best_Q={best_q:.2f} | "
                        f"측정값 수={len(self.session_measurements)} | "
                        f"조건: min_dur={elapsed >= self.cfg.session_min_duration}, "
                        f"q_target={best_q >= self.cfg.session_quality_target if self.session_best else False}")
