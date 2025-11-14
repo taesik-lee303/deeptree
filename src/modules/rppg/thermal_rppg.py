@@ -149,8 +149,14 @@ class ThermalrPPGConfig:
     enable_bilateral_filter: bool = False  # Bilateral filtering (느리지만 노이즈 제거 효과)
     clahe_clip_limit: float = 2.0  # CLAHE clip limit
     clahe_tile_size: int = 8  # CLAHE tile grid size
-    face_temp_range: Tuple[float, float] = (28.0, 35.0)  # 얼굴 온도 검증 범위 (°C)
+    face_temp_range: Tuple[float, float] = (26.0, 38.0)  # 얼굴 온도 검증 범위 (°C) - 확대
     enable_kcf_tracking: bool = False  # KCF 추적기 사용 (템플릿 매칭 대신)
+    
+    # ROI extraction parameters
+    roi_patch_size: int = 6  # ROI 중심 패치 크기 (기본값 3 → 6으로 확대)
+    roi_use_weighted_mean: bool = True  # ROI 전체 평균과 중심 패치 가중 평균 사용
+    roi_center_weight: float = 0.7  # 중심 패치 가중치 (0.7 = 중심 70% + 전체 30%)
+    roi_dynamic_positioning: bool = True  # 온도 분포 기반 ROI 위치 동적 조정
     
     # Upscaling parameters
     up_scale: int = 3  # 얼굴 탐지 및 ROI 추출용 업스케일 배수 (3-6 권장, 카메라 거리에 따라 조정)
@@ -603,9 +609,34 @@ class FastMeasurementMode:
 
 
 # --------------------- Utils ---------------------
-def normalize_to_uint8(temp_frame, p_low=5, p_high=95):
-    lo = np.percentile(temp_frame, p_low)
-    hi = np.percentile(temp_frame, p_high)
+def normalize_to_uint8(temp_frame, p_low=5, p_high=95, face_bbox=None):
+    """
+    온도 프레임을 uint8로 정규화
+    얼굴 영역이 있으면 해당 영역의 percentile 사용 (더 좁은 범위로 신호 강조)
+    """
+    if face_bbox is not None:
+        x, y, w, h = face_bbox
+        x = max(0, min(x, temp_frame.shape[1] - 1))
+        y = max(0, min(y, temp_frame.shape[0] - 1))
+        w = min(w, temp_frame.shape[1] - x)
+        h = min(h, temp_frame.shape[0] - y)
+        if w > 0 and h > 0:
+            face_region = temp_frame[y:y+h, x:x+w]
+            # 얼굴 영역의 percentile 사용 (더 좁은 범위)
+            lo = np.percentile(face_region, p_low)
+            hi = np.percentile(face_region, p_high)
+            # 전체 프레임 범위와 조합
+            frame_lo = np.percentile(temp_frame, p_low)
+            frame_hi = np.percentile(temp_frame, p_high)
+            lo = min(lo, frame_lo)
+            hi = max(hi, frame_hi)
+        else:
+            lo = np.percentile(temp_frame, p_low)
+            hi = np.percentile(temp_frame, p_high)
+    else:
+        lo = np.percentile(temp_frame, p_low)
+        hi = np.percentile(temp_frame, p_high)
+    
     if hi <= lo:
         hi = lo + 1e-3
     im = np.clip((temp_frame - lo) / (hi - lo), 0, 1)
@@ -738,12 +769,12 @@ class MultiFrameSuperRes:
 
 # --------------------- Detection / Tracking ---------------------
 class ThermalFaceDetector:
-    def __init__(self, ambient_delta: float = 0.8, p_hot: float = 75.0,  # 더 관대한 임계값
+    def __init__(self, ambient_delta: float = 0.5, p_hot: float = 65.0,  # 임계값 완화 (얼굴 영역 더 넓게 감지)
                  min_area_frac: float = 0.015, max_area_frac: float = 0.5,  # 면적 범위 확대
                  top_bias: float = 0.5, search_expand: float = 0.8, lost_tolerance: int = 20,  # 더 관대한 설정
                  enable_preprocessing: bool = True, enable_clahe: bool = True,
                  enable_bilateral: bool = False, clahe_clip_limit: float = 2.0,
-                 clahe_tile_size: int = 8, face_temp_range: Tuple[float, float] = (28.0, 35.0),
+                 clahe_tile_size: int = 8, face_temp_range: Tuple[float, float] = (26.0, 38.0),
                  enable_kcf: bool = False):
         self.ambient_delta = ambient_delta
         self.p_hot = p_hot
@@ -801,16 +832,43 @@ class ThermalFaceDetector:
         bh = int(min(H - y, int(bh * (1 + 2*pad))))
         return (x, y, bw, bh)
 
-    def _preprocess_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _preprocess_frame(self, frame: np.ndarray, face_bbox=None) -> Tuple[np.ndarray, np.ndarray]:
         """
         열화상 프레임 전처리 파이프라인 (문서 기반 개선)
+        얼굴 영역의 온도 범위를 동적으로 계산하여 정규화
         Returns: (processed_uint8, original_thermal)
         """
         if not self.enable_preprocessing:
-            return normalize_to_uint8(frame), frame
+            return normalize_to_uint8(frame, face_bbox=face_bbox), frame
         
-        # 1. 온도 정규화 (20-40°C -> 0-255)
-        temp_min, temp_max = 20.0, 40.0
+        # 1. 온도 정규화 - 얼굴 영역이 있으면 동적 범위 계산, 없으면 기본 범위 사용
+        if face_bbox is not None:
+            x, y, w, h = face_bbox
+            x = max(0, min(x, frame.shape[1] - 1))
+            y = max(0, min(y, frame.shape[0] - 1))
+            w = min(w, frame.shape[1] - x)
+            h = min(h, frame.shape[0] - y)
+            if w > 0 and h > 0:
+                face_region = frame[y:y+h, x:x+w]
+                # 얼굴 영역의 10-90 percentile 사용 (더 좁은 범위로 신호 강조)
+                temp_min = float(np.percentile(face_region, 10))
+                temp_max = float(np.percentile(face_region, 90))
+                # 안전 범위 확보
+                if temp_max <= temp_min:
+                    temp_max = temp_min + 1.0
+                # 전체 프레임 범위와 얼굴 영역 범위의 조합
+                frame_min, frame_max = float(np.min(frame)), float(np.max(frame))
+                temp_min = min(temp_min, frame_min)
+                temp_max = max(temp_max, frame_max)
+            else:
+                temp_min, temp_max = 20.0, 40.0
+        else:
+            # 얼굴 영역이 없으면 전체 프레임의 20-80 percentile 사용
+            temp_min = float(np.percentile(frame, 20))
+            temp_max = float(np.percentile(frame, 80))
+            if temp_max <= temp_min:
+                temp_min, temp_max = 20.0, 40.0
+        
         normalized = np.clip(
             (frame - temp_min) / (temp_max - temp_min) * 255,
             0, 255
@@ -940,7 +998,9 @@ class ThermalFaceDetector:
         cx_img, cy_img = W*0.5, H*self.top_bias
         
         # 전처리 파이프라인 적용 (문서 기반 개선)
-        frame_u8, frame_thermal = self._preprocess_frame(frame)
+        # 이전 bbox가 있으면 얼굴 영역 기반 동적 정규화 사용
+        face_bbox_for_preprocess = self.last_bbox if self.last_bbox is not None else None
+        frame_u8, frame_thermal = self._preprocess_frame(frame, face_bbox=face_bbox_for_preprocess)
 
         # 디버깅 정보 수집
         debug_info = {
@@ -1131,32 +1191,132 @@ class MotionCompensator:
 
 # --------------------- ROI Manager ---------------------
 class ROIManager:
-    def __init__(self):
+    def __init__(self, patch_size: int = 6, use_weighted_mean: bool = True, 
+                 center_weight: float = 0.7, dynamic_positioning: bool = True):
         self.buffers: Dict[str, deque] = {}
+        self.patch_size = patch_size
+        self.use_weighted_mean = use_weighted_mean
+        self.center_weight = center_weight
+        self.dynamic_positioning = dynamic_positioning
 
-    def extract(self, frame: np.ndarray, bbox, patch=3):
+    def _find_face_center_from_temp(self, frame: np.ndarray, bbox) -> Tuple[float, float]:
+        """온도 분포를 기반으로 얼굴 중심 위치 찾기 (원형/타원형 고려)"""
+        if bbox is None:
+            return None, None
+        x, y, w, h = bbox
+        x = max(0, min(x, frame.shape[1] - 1))
+        y = max(0, min(y, frame.shape[0] - 1))
+        w = min(w, frame.shape[1] - x)
+        h = min(h, frame.shape[0] - y)
+        if w <= 0 or h <= 0:
+            return None, None
+        
+        face_region = frame[y:y+h, x:x+w]
+        # 온도가 높은 영역의 중심 찾기 (가중 중심)
+        yy, xx = np.ogrid[:h, :w]
+        # 온도가 높을수록 높은 가중치
+        weights = face_region - np.min(face_region)
+        weights = np.maximum(weights, 0)  # 음수 제거
+        
+        if np.sum(weights) > 0:
+            center_x = float(np.sum(xx * weights) / np.sum(weights))
+            center_y = float(np.sum(yy * weights) / np.sum(weights))
+            # 전체 프레임 좌표로 변환
+            return x + center_x, y + center_y
+        else:
+            # 가중치가 없으면 기하학적 중심
+            return x + w/2, y + h/2
+
+    def _adjust_roi_position(self, frame: np.ndarray, bbox, base_roi: Tuple[float, float, float, float],
+                            face_center_x: float, face_center_y: float) -> Tuple[int, int, int, int]:
+        """온도 분포 기반으로 ROI 위치 동적 조정"""
+        if not self.dynamic_positioning or face_center_x is None or face_center_y is None:
+            # 동적 조정 비활성화 또는 얼굴 중심을 찾을 수 없으면 기본 위치 사용
+            return tuple(map(int, base_roi))
+        
+        x, y, w, h = bbox
+        rx_base, ry_base, rw_base, rh_base = base_roi
+        
+        # 얼굴 중심을 기준으로 ROI 위치 미세 조정
+        # 얼굴 중심과 ROI 중심의 차이를 고려하여 조정
+        roi_center_x = rx_base + rw_base / 2
+        roi_center_y = ry_base + rh_base / 2
+        
+        # 얼굴 중심으로의 이동량 계산 (약간만 조정)
+        dx = (face_center_x - roi_center_x) * 0.3  # 30%만 이동 (너무 급격한 변화 방지)
+        dy = (face_center_y - roi_center_y) * 0.3
+        
+        rx = int(rx_base + dx)
+        ry = int(ry_base + dy)
+        
+        # 프레임 범위 내로 클리핑
+        rx = max(0, min(rx, frame.shape[1] - 1))
+        ry = max(0, min(ry, frame.shape[0] - 1))
+        rw = int(rw_base)
+        rh = int(rh_base)
+        
+        # ROI가 프레임을 벗어나지 않도록 조정
+        rw = min(rw, frame.shape[1] - rx)
+        rh = min(rh, frame.shape[0] - ry)
+        
+        return rx, ry, rw, rh
+
+    def extract(self, frame: np.ndarray, bbox, patch=None):
         if bbox is None:
             return {}, {}
+        if patch is None:
+            patch = self.patch_size
+        
         x, y, w, h = bbox
-        rois = {
-            'forehead': (x + int(0.25*w), y + int(0.05*h), int(0.5*w), int(0.22*h)),
-            'l_cheek': (x + int(0.05*w), y + int(0.45*h), int(0.28*w), int(0.28*h)),
-            'r_cheek': (x + int(0.67*w), y + int(0.45*h), int(0.28*w), int(0.28*h)),
-            'nose': (x + int(0.40*w), y + int(0.40*h), int(0.20*w), int(0.22*h)),
+        
+        # 얼굴 중심 찾기 (온도 분포 기반)
+        face_center_x, face_center_y = self._find_face_center_from_temp(frame, bbox)
+        
+        # 기본 ROI 위치 (기존 방식)
+        base_rois = {
+            'forehead': (x + 0.25*w, y + 0.05*h, 0.5*w, 0.22*h),
+            'l_cheek': (x + 0.05*w, y + 0.45*h, 0.28*w, 0.28*h),
+            'r_cheek': (x + 0.67*w, y + 0.45*h, 0.28*w, 0.28*h),
+            'nose': (x + 0.40*w, y + 0.40*h, 0.20*w, 0.22*h),
         }
+        
+        rois = {}
         vals = {}
-        for name, (rx, ry, rw, rh) in rois.items():
+        
+        for name, base_roi in base_rois.items():
+            # 동적 위치 조정
+            rx, ry, rw, rh = self._adjust_roi_position(frame, bbox, base_roi, face_center_x, face_center_y)
+            
+            # 프레임 범위 내로 클리핑
             rx = max(0, min(rx, frame.shape[1]-1))
             ry = max(0, min(ry, frame.shape[0]-1))
             rw = max(2, min(rw, frame.shape[1]-rx))
             rh = max(2, min(rh, frame.shape[0]-ry))
+            
             region = frame[ry:ry+rh, rx:rx+rw]
+            if region.size == 0:
+                continue
+            
+            # 중심 패치 추출
             cx, cy = rw//2, rh//2
             x0, x1 = max(0, cx-patch), min(rw, cx+patch+1)
             y0, y1 = max(0, cy-patch), min(rh, cy+patch+1)
             patch_arr = region[y0:y1, x0:x1]
-            vals[name] = float(np.mean(patch_arr))
+            
+            # 값 계산: 가중 평균 또는 중심 패치만
+            if self.use_weighted_mean and patch_arr.size > 0:
+                center_mean = float(np.mean(patch_arr))
+                region_mean = float(np.mean(region))
+                # 가중 평균 (중심 70%, 전체 30%)
+                vals[name] = self.center_weight * center_mean + (1.0 - self.center_weight) * region_mean
+            else:
+                if patch_arr.size > 0:
+                    vals[name] = float(np.mean(patch_arr))
+                else:
+                    vals[name] = float(np.mean(region))
+            
             rois[name] = (rx, ry, rw, rh)
+        
         return vals, rois
 
 
@@ -1543,6 +1703,8 @@ class ThermalrPPG:
         self.cfg = cfg
         self.sensor = MLX9064XInterface(refresh_hz=int(cfg.sampling_rate))
         self.detector = ThermalFaceDetector(
+            ambient_delta=0.5,  # 임계값 완화
+            p_hot=65.0,  # 임계값 완화
             enable_preprocessing=cfg.enable_face_preprocessing,
             enable_clahe=cfg.enable_clahe,
             enable_bilateral=cfg.enable_bilateral_filter,
@@ -1553,7 +1715,12 @@ class ThermalrPPG:
         )
         self.motion = MotionCompensator()
         self.motion.mc_stride = cfg.mc_stride
-        self.roi = ROIManager()
+        self.roi = ROIManager(
+            patch_size=cfg.roi_patch_size,
+            use_weighted_mean=cfg.roi_use_weighted_mean,
+            center_weight=cfg.roi_center_weight,
+            dynamic_positioning=cfg.roi_dynamic_positioning
+        )
         self.proc = SignalProc(cfg.sampling_rate, band=cfg.target_hr_range)
         self.resp = RespEstimator(cfg.sampling_rate)
         self.buffers: Dict[str, deque] = {}
