@@ -169,8 +169,8 @@ class ThermalrPPGConfig:
     # Deep learning face landmark detection
     enable_face_landmarks: bool = True  # 딥러닝 기반 얼굴 랜드마크 검출 활성화
     landmark_model: str = "mediapipe"  # "mediapipe" or "opencv_dnn"
-    landmark_min_detection_confidence: float = 0.5  # 랜드마크 검출 최소 신뢰도
-    landmark_min_tracking_confidence: float = 0.5  # 랜드마크 추적 최소 신뢰도
+    landmark_min_detection_confidence: float = 0.3  # 랜드마크 검출 최소 신뢰도 (열화상 이미지용으로 낮춤: 0.5->0.3)
+    landmark_min_tracking_confidence: float = 0.3  # 랜드마크 추적 최소 신뢰도 (열화상 이미지용으로 낮춤: 0.5->0.3)
     
     # ROI extraction parameters
     roi_patch_size: int = 6  # ROI 중심 패치 크기 (기본값 3 → 6으로 확대)
@@ -1333,7 +1333,7 @@ class FaceLandmarkDetector:
                 min_detection_confidence=min_detection_confidence,
                 min_tracking_confidence=min_tracking_confidence
             )
-            logger.info("MediaPipe Face Mesh initialized for landmark detection")
+            logger.info(f"MediaPipe Face Mesh initialized for landmark detection (detection_conf={min_detection_confidence}, tracking_conf={min_tracking_confidence})")
         else:
             self.enable = False
             logger.warning(f"Unsupported landmark model: {model}. Disabling landmark detection.")
@@ -1364,20 +1364,52 @@ class FaceLandmarkDetector:
             if len(frame_u8.shape) == 2:
                 frame_rgb = cv2.cvtColor(frame_u8, cv2.COLOR_GRAY2RGB)
             else:
-                frame_rgb = frame_u8
+                frame_rgb = frame_u8.copy()
+            
+            # 열화상 이미지 전처리 강화 (MediaPipe 인식 향상)
+            # 1. 히스토그램 균등화 (대비 향상)
+            if len(frame_rgb.shape) == 3:
+                # RGB 각 채널에 히스토그램 균등화 적용
+                frame_rgb_yuv = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2YUV)
+                frame_rgb_yuv[:,:,0] = cv2.equalizeHist(frame_rgb_yuv[:,:,0])
+                frame_rgb = cv2.cvtColor(frame_rgb_yuv, cv2.COLOR_YUV2RGB)
+            else:
+                frame_rgb = cv2.equalizeHist(frame_rgb)
+                frame_rgb = cv2.cvtColor(frame_rgb, cv2.COLOR_GRAY2RGB)
+            
+            # 2. 대비 향상 (CLAHE 추가 적용)
+            clahe_landmark = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            if len(frame_rgb.shape) == 3:
+                frame_rgb_yuv = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2YUV)
+                frame_rgb_yuv[:,:,0] = clahe_landmark.apply(frame_rgb_yuv[:,:,0])
+                frame_rgb = cv2.cvtColor(frame_rgb_yuv, cv2.COLOR_YUV2RGB)
+            else:
+                frame_rgb = clahe_landmark.apply(frame_rgb)
+                frame_rgb = cv2.cvtColor(frame_rgb, cv2.COLOR_GRAY2RGB)
             
             # bbox가 있으면 해당 영역만 검출 (성능 향상)
             if bbox is not None:
                 x, y, w, h = bbox
-                # bbox 확장 (약간 여유 공간)
-                expand = 0.1
+                # bbox 확장 (열화상 이미지에서 더 넓게 확장)
+                expand = 0.3  # 0.1 -> 0.3으로 증가 (더 넓은 영역)
                 x = max(0, int(x - w * expand))
                 y = max(0, int(y - h * expand))
                 w = min(frame_rgb.shape[1] - x, int(w * (1 + 2 * expand)))
                 h = min(frame_rgb.shape[0] - y, int(h * (1 + 2 * expand)))
                 roi = frame_rgb[y:y+h, x:x+w]
-                if roi.size == 0:
-                    return None
+                
+                # 최소 크기 체크 (MediaPipe는 최소 128x128 권장)
+                min_size = 64  # 최소 크기
+                if roi.size == 0 or w < min_size or h < min_size:
+                    # 너무 작으면 업스케일
+                    if w > 0 and h > 0:
+                        scale = max(min_size / w, min_size / h)
+                        new_w = int(w * scale)
+                        new_h = int(h * scale)
+                        roi = cv2.resize(roi, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+                        logger.debug(f"랜드마크 검출용 ROI 업스케일: {w}x{h} -> {new_w}x{new_h}")
+                    else:
+                        return None
             else:
                 roi = frame_rgb
                 x, y = 0, 0
@@ -1387,6 +1419,19 @@ class FaceLandmarkDetector:
             
             if not results.multi_face_landmarks:
                 self.landmarks = None
+                # 디버깅: ROI 정보 로깅
+                if not hasattr(self, '_last_fail_log_ts'):
+                    self._last_fail_log_ts = 0.0
+                if time.time() - self._last_fail_log_ts > 5.0:  # 5초마다 로그
+                    roi_stats = {
+                        'size': f"{roi.shape[1]}x{roi.shape[0]}" if roi.size > 0 else "empty",
+                        'mean': float(np.mean(roi)) if roi.size > 0 else 0.0,
+                        'std': float(np.std(roi)) if roi.size > 0 else 0.0,
+                        'min': int(np.min(roi)) if roi.size > 0 else 0,
+                        'max': int(np.max(roi)) if roi.size > 0 else 0,
+                    }
+                    logger.warning(f"❌ MediaPipe 얼굴 검출 실패 - ROI 정보: {roi_stats}, bbox={bbox}")
+                    self._last_fail_log_ts = time.time()
                 return None
             
             # 첫 번째 얼굴의 랜드마크 추출
