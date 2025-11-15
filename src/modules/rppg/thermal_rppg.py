@@ -1589,6 +1589,14 @@ class ROIManager:
             frame_u8: 전처리된 uint8 프레임 (랜드마크 검출용, 선택적)
             patch: 패치 크기
         """
+        # ROI 추출 시작 시 로깅 플래그 리셋
+        if not hasattr(self, '_extract_call_count'):
+            self._extract_call_count = 0
+        self._extract_call_count += 1
+        if self._extract_call_count % 50 == 0:  # 50번 호출마다 리셋
+            self._landmark_usage_logged = False
+            self._fixed_ratio_usage_logged = False
+        
         if bbox is None:
             return {}, {}
         if patch is None:
@@ -1598,15 +1606,38 @@ class ROIManager:
         
         # 랜드마크 기반 ROI 추출 시도
         landmark_rois = {}
+        landmark_detection_status = "비활성화"
         if self.landmark_detector is not None and self.landmark_detector.enable and frame_u8 is not None:
             try:
                 landmarks = self.landmark_detector.detect(frame_u8, bbox)
                 if landmarks is not None:
                     landmark_rois = self.landmark_detector.get_roi_from_landmarks(landmarks, frame.shape)
                     if landmark_rois:
-                        logger.debug(f"랜드마크 기반 ROI 추출 성공: {list(landmark_rois.keys())}")
+                        detected_regions = list(landmark_rois.keys())
+                        landmark_detection_status = f"✅ 성공 ({len(detected_regions)}개 ROI: {', '.join(detected_regions)})"
+                        logger.info(f"🎯 랜드마크 기반 ROI 추출 성공: {detected_regions}")
+                    else:
+                        landmark_detection_status = "⚠️ 랜드마크 검출됐으나 ROI 변환 실패"
+                        logger.warning(f"⚠️ 랜드마크는 검출되었으나 ROI 변환 실패 (landmarks keys: {list(landmarks.keys()) if landmarks else 'None'})")
+                else:
+                    landmark_detection_status = "❌ 랜드마크 검출 실패 (얼굴 미검출 또는 신뢰도 부족)"
+                    logger.warning(f"❌ 랜드마크 검출 실패: MediaPipe가 얼굴을 찾지 못함")
             except Exception as e:
-                logger.debug(f"랜드마크 기반 ROI 추출 실패, 고정 비율 방식 사용: {e}")
+                landmark_detection_status = f"❌ 예외 발생: {str(e)[:50]}"
+                logger.warning(f"❌ 랜드마크 기반 ROI 추출 예외 발생, 고정 비율 방식 사용: {e}")
+        elif self.landmark_detector is None:
+            landmark_detection_status = "비활성화 (detector=None)"
+        elif not self.landmark_detector.enable:
+            landmark_detection_status = "비활성화 (enable=False)"
+        elif frame_u8 is None:
+            landmark_detection_status = "비활성화 (frame_u8=None)"
+        
+        # 랜드마크 상태 주기적 로깅
+        if not hasattr(self, '_last_landmark_log_ts'):
+            self._last_landmark_log_ts = 0.0
+        if time.time() - self._last_landmark_log_ts > 3.0:  # 3초마다 로그
+            logger.info(f"🎯 랜드마크 검출 상태: {landmark_detection_status}")
+            self._last_landmark_log_ts = time.time()
         
         # 얼굴 중심 찾기 (온도 분포 기반)
         face_center_x, face_center_y = self._find_face_center_from_temp(frame, bbox)
@@ -1626,9 +1657,17 @@ class ROIManager:
             # 랜드마크 기반 ROI가 있으면 우선 사용, 없으면 고정 비율 사용
             if name in landmark_rois:
                 rx, ry, rw, rh = landmark_rois[name]
+                # 랜드마크 사용 여부를 주기적으로 로깅 (첫 번째 ROI만)
+                if name == 'forehead' and not hasattr(self, '_landmark_usage_logged'):
+                    logger.info(f"✅ ROI '{name}': 랜드마크 기반 사용 (랜드마크 ROI: {rx},{ry},{rw},{rh})")
+                    self._landmark_usage_logged = True
             else:
                 # 동적 위치 조정 (고정 비율 기반)
                 rx, ry, rw, rh = self._adjust_roi_position(frame, bbox, base_roi, face_center_x, face_center_y)
+                # 고정 비율 사용 여부를 주기적으로 로깅 (첫 번째 ROI만)
+                if name == 'forehead' and not hasattr(self, '_fixed_ratio_usage_logged'):
+                    logger.info(f"⚠️ ROI '{name}': 고정 비율 사용 (랜드마크 없음, 고정 비율 ROI: {rx},{ry},{rw},{rh})")
+                    self._fixed_ratio_usage_logged = True
             
             # 프레임 범위 내로 클리핑
             rx = max(0, min(rx, frame.shape[1]-1))
@@ -2228,9 +2267,20 @@ class ThermalrPPG:
             return None, 0.0, {}
 
         # 품질 보정(모션/발한)
-        motion_pen = float(np.clip(1.0 - (self.motion.motion_level / self.cfg.motion_px_warn), 0.4, 1.0))
+        # 모션 페널티: 가중치 완화 (최소값 0.7로 상향, motion_px_warn 기준 완화)
+        motion_pen = float(np.clip(1.0 - (self.motion.motion_level / (self.cfg.motion_px_warn * 1.5)), 0.7, 1.0))
         persp_pen  = 0.6 if time.time() < self._persp_until else 1.0
         q_arr = np.array(qs, dtype=np.float32) * motion_pen * persp_pen
+        
+        # 품질 계산 요소 로깅 (주기적으로)
+        if hasattr(self, '_last_q_log_ts'):
+            if time.time() - self._last_q_log_ts > 5.0:  # 5초마다 로그
+                logger.info(f"📊 품질 계산 요소: SNR_신뢰도={[f'{q:.3f}' for q in qs]}, "
+                          f"모션_페널티={motion_pen:.3f} (motion_level={self.motion.motion_level:.1f}px), "
+                          f"발한_페널티={persp_pen:.3f}, 최종_Q={[f'{q:.3f}' for q in q_arr[:len(qs)]]}")
+                self._last_q_log_ts = time.time()
+        else:
+            self._last_q_log_ts = time.time()
         hr_arr = np.array(hrs, dtype=np.float32)
         snr_arr = np.array(snrs, dtype=np.float32)
         harm_arr = np.array(harms, dtype=np.float32)
