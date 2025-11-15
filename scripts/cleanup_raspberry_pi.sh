@@ -79,9 +79,15 @@ else
 fi
 echo ""
 
-# 9. 사용하지 않는 로케일 파일 정리
+# 9. 사용하지 않는 로케일 파일 정리 (선택적, 대화형 프롬프트 있음)
 echo "=== 9. 사용하지 않는 로케일 파일 정리 ==="
-sudo apt-get install -y localepurge 2>/dev/null || echo "localepurge 설치 실패 (선택적)"
+echo "주의: localepurge는 대화형 설정이 필요합니다."
+echo "자동으로 진행하려면 다음 명령을 별도로 실행하세요:"
+echo "  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y localepurge"
+echo "  echo 'localepurge localepurge/use-not-installed boolean true' | sudo debconf-set-selections"
+echo "  echo 'localepurge localepurge/verbose boolean false' | sudo debconf-set-selections"
+echo "  echo 'localepurge localepurge/showfreedspace boolean true' | sudo debconf-set-selections"
+echo "건너뜀 (수동 실행 권장)"
 echo ""
 
 # 최종 용량 확인
