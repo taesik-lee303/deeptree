@@ -1,0 +1,30 @@
+# Thermal Health Monitor System Requirements
+# 라즈베리파이5 + MLX9064X 열화상 카메라 기반 건강 모니터링 시스템
+
+# 핵심 라이브러리
+numpy>=1.21.0
+opencv-python>=4.5.0
+scipy>=1.7.0
+
+# MLX9064X 카메라 드라이버
+# Adafruit CircuitPython 라이브러리 (라즈베리파이용)
+# 설치: pip install adafruit-circuitpython-mlx90640
+# 또는: pip install adafruit-circuitpython-mlx90641
+# 참고: MLX9064X는 MLX90640/90641과 유사한 인터페이스를 가질 것으로 예상
+
+# I2C 통신 (라즈베리파이)
+# 설치: pip install adafruit-blinka
+# 또는 시스템 패키지: sudo apt-get install python3-pip python3-dev
+#                     sudo pip3 install adafruit-circuitpython-mlx90640
+
+# 데이터 처리
+scikit-learn>=1.0.0  # 머신러닝 기반 분석 (선택사항)
+
+# 로깅 및 유틸리티
+# (Python 표준 라이브러리 사용)
+
+# 개발 및 테스트 (선택사항)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
+
