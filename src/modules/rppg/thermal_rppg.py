@@ -779,11 +779,13 @@ class MultiFrameSuperRes:
                 _, M = cv2.findTransformECC(ref_f, mov_f, M, cv2.MOTION_AFFINE, criteria)
             except Exception:
                 M = np.eye(2, 3, dtype=np.float32)
-            up = cv2.resize(frm, (W*S, H*S), interpolation=cv2.INTER_CUBIC)
+            # INTER_LINEAR 사용: INTER_CUBIC 대신 사용하여 대각선 아티팩트 감소
+            up = cv2.resize(frm, (W*S, H*S), interpolation=cv2.INTER_LINEAR)
             M_hr = M.copy()
             M_hr[0, 2] *= S
             M_hr[1, 2] *= S
-            warped = cv2.warpAffine(up, M_hr, (W*S, H*S), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+            # INTER_CUBIC으로 변경하여 warping 품질 향상 (대각선 아티팩트는 resize 단계에서 이미 해결)
+            warped = cv2.warpAffine(up, M_hr, (W*S, H*S), flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP)
             acc += warped
             cnt += 1.0
         out = acc / np.maximum(cnt, 1e-6)
@@ -1465,8 +1467,10 @@ class MotionCompensator:
                 logger.debug(f"⚠️ Motion compensation 과도한 움직임 감지 ({motion_magnitude:.1f}px). 변환 무시")
                 return frame
             
+            # INTER_CUBIC 사용: Motion Compensation의 warping 품질 향상
+            # resize 단계에서 이미 INTER_LINEAR를 사용하므로 warping 단계에서는 INTER_CUBIC 사용 가능
             out = cv2.warpAffine(frame, M, (frame.shape[1], frame.shape[0]),
-                                 flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+                                 flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP)
             self.M = M
             # ROI 범위 재검증 후 업데이트
             roi_compensated = out[y:y+h, x:x+w]
@@ -3290,8 +3294,10 @@ class ThermalrPPG:
                         sr = self.mfsr.build()
 
                 proc = sr if sr is not None else frame
-                up = cv2.resize(proc, (W*self.up_scale, H*self.up_scale), interpolation=cv2.INTER_CUBIC)
-                up_lr = cv2.resize(frame, (W*self.up_scale, H*self.up_scale), interpolation=cv2.INTER_CUBIC)
+                # INTER_LINEAR 사용: INTER_CUBIC 대신 사용하여 대각선 아티팩트 감소
+                # INTER_CUBIC은 고해상도 업스케일링 시 대각선 방향 패턴을 만들 수 있음
+                up = cv2.resize(proc, (W*self.up_scale, H*self.up_scale), interpolation=cv2.INTER_LINEAR)
+                up_lr = cv2.resize(frame, (W*self.up_scale, H*self.up_scale), interpolation=cv2.INTER_LINEAR)
 
                 # Detect + optional motion compensation
                 bbox = self.detector.detect(up)
