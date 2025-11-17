@@ -915,6 +915,12 @@ class ThermalFaceDetector:
         
         if best_idx < 1:
             return None
+        
+        # 인덱스 범위 안전 체크
+        if best_idx >= stats.shape[0]:
+            logger.warning(f"⚠️ best_idx({best_idx})가 stats 범위({stats.shape[0]})를 벗어남. None 반환")
+            return None
+        
         x, y, bw, bh, _ = stats[best_idx]
         
         # 연속성 최종 검증: 이전 bbox와 너무 다르면 무시
