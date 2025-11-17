@@ -179,6 +179,11 @@ class ThermalrPPGConfig:
     roi_dynamic_positioning: bool = True  # 온도 분포 기반 ROI 위치 동적 조정
     roi_use_center_only: bool = False  # True면 중심 패치만 사용 (가중 평균 대신)
     
+    # 얼굴 크기 기반 ROI 세분화 (가까이 갈수록 더 세분화)
+    roi_enable_subdivision: bool = True  # 얼굴이 클 때 ROI 세분화 활성화
+    roi_subdivision_threshold: float = 0.15  # 얼굴이 프레임의 이 비율 이상이면 세분화 (0.15 = 15%)
+    roi_subdivision_min_size: int = 8  # 세분화된 ROI 최소 크기 (픽셀)
+    
     # Upscaling parameters
     up_scale: int = 3  # 얼굴 탐지 및 ROI 추출용 업스케일 배수 (3-6 권장, 카메라 거리에 따라 조정)
     
@@ -869,8 +874,41 @@ class ThermalFaceDetector:
             center_score = -((cx - cx_img)**2 + (cy - cy_img)**2)
             top_bonus = -abs(cy - (H*self.top_bias)) * 0.5
             
+            # 타원형 패턴 점수 추가 (얼굴은 둥글게 온도가 분포됨)
+            elliptical_score = 0.0
+            try:
+                # 온도 분포가 타원형인지 확인
+                region_normalized = (region - np.min(region)) / (np.max(region) - np.min(region) + 1e-8)
+                # 간단한 타원형 패턴 검증: 중심에서 거리에 따른 온도 감소
+                h_region, w_region = region.shape
+                if h_region >= 3 and w_region >= 3:
+                    center_x_region, center_y_region = w_region / 2, h_region / 2
+                    yy, xx = np.ogrid[:h_region, :w_region]
+                    dist_map = np.hypot(xx - center_x_region, yy - center_y_region)
+                    max_dist = np.max(dist_map)
+                    
+                    if max_dist > 0:
+                        # 중심에서 멀어질수록 온도가 감소하는지 확인
+                        n_samples = min(5, int(max_dist))
+                        if n_samples >= 2:
+                            dist_bins = np.linspace(0, max_dist, n_samples)
+                            temp_by_dist = []
+                            for i in range(len(dist_bins) - 1):
+                                mask = (dist_map >= dist_bins[i]) & (dist_map < dist_bins[i+1])
+                                if np.sum(mask) > 0:
+                                    temp_by_dist.append(float(np.mean(region_normalized[mask])))
+                            
+                            if len(temp_by_dist) >= 2:
+                                # 중심이 외곽보다 뜨거운지 확인
+                                if temp_by_dist[0] > temp_by_dist[-1] + 0.1:
+                                    # 타원형 패턴 점수 (0.0 ~ 1.0)
+                                    elliptical_score = min(1.0, (temp_by_dist[0] - temp_by_dist[-1]) * 2.0)
+            except Exception:
+                elliptical_score = 0.0
+            
             # 온도 점수 가중치를 낮추고 위치/크기 점수를 높임 (다른 열원 오인식 방지)
-            score = 0.8*temp_score + 0.003*area + 0.005*center_score + top_bonus + continuity_penalty
+            # 타원형 패턴 점수 추가 (얼굴은 둥글게 온도가 분포되므로 보너스)
+            score = 0.7*temp_score + 0.003*area + 0.005*center_score + top_bonus + 0.1*elliptical_score*100 + continuity_penalty
             
             if score > best_score:
                 best_score, best_idx = score, i
@@ -955,10 +993,128 @@ class ThermalFaceDetector:
         
         return enhanced, frame
     
+    def _check_elliptical_pattern(self, roi_temps: np.ndarray) -> float:
+        """
+        온도 분포가 타원형/원형 패턴인지 검증
+        얼굴은 중심에서 둥글게 온도가 분포되는 경향이 있음
+        
+        Returns:
+            타원형 적합도 점수 (0.0 ~ 1.0, 높을수록 타원형에 가까움)
+        """
+        if roi_temps.size == 0:
+            return 0.0
+        
+        h, w = roi_temps.shape
+        if h < 3 or w < 3:
+            return 0.0
+        
+        # 1. 온도 중심 찾기 (가중 중심)
+        yy, xx = np.ogrid[:h, :w]
+        temp_min = float(np.min(roi_temps))
+        weights = roi_temps - temp_min
+        weights = np.maximum(weights, 0)  # 음수 제거
+        
+        if np.sum(weights) == 0:
+            return 0.0
+        
+        center_x = float(np.sum(xx * weights) / np.sum(weights))
+        center_y = float(np.sum(yy * weights) / np.sum(weights))
+        
+        # 2. 중심에서 거리에 따른 온도 분포 확인 (방사형 분포)
+        # 중심에서 멀어질수록 온도가 감소하는 패턴 확인
+        max_dist = np.hypot(w, h) / 2.0
+        n_rings = min(8, int(max_dist))  # 8개 링으로 나누기
+        
+        if n_rings < 2:
+            return 0.0
+        
+        ring_temps = []
+        ring_radii = []
+        
+        for ring_idx in range(1, n_rings + 1):
+            r_inner = (ring_idx - 1) * max_dist / n_rings
+            r_outer = ring_idx * max_dist / n_rings
+            
+            # 각 링 영역의 픽셀 찾기
+            dist_map = np.hypot(xx - center_x, yy - center_y)
+            ring_mask = (dist_map >= r_inner) & (dist_map < r_outer)
+            
+            if np.sum(ring_mask) > 0:
+                ring_temp = float(np.mean(roi_temps[ring_mask]))
+                ring_temps.append(ring_temp)
+                ring_radii.append((r_inner + r_outer) / 2.0)
+        
+        if len(ring_temps) < 3:
+            return 0.0
+        
+        # 3. 중심에서 멀어질수록 온도가 감소하는지 확인 (단조 감소 패턴)
+        # 얼굴은 중심(이마)이 가장 뜨거우고 주변으로 갈수록 차가워짐
+        ring_temps = np.array(ring_temps)
+        ring_radii = np.array(ring_radii)
+        
+        # 중심 온도 (첫 번째 링)
+        center_temp = ring_temps[0] if len(ring_temps) > 0 else float(np.mean(roi_temps))
+        
+        # 외곽 온도 (마지막 링)
+        outer_temp = ring_temps[-1] if len(ring_temps) > 0 else float(np.mean(roi_temps))
+        
+        # 중심이 외곽보다 뜨거워야 함 (최소 0.3°C 차이)
+        if center_temp < outer_temp + 0.3:
+            return 0.0
+        
+        # 4. 타원형 적합도 계산 (온도 분포가 부드럽게 감소하는지)
+        # 선형 회귀로 거리-온도 관계 확인
+        if len(ring_radii) >= 3:
+            # 거리에 따른 온도 감소율 계산
+            coeffs = np.polyfit(ring_radii, ring_temps, 1)  # 1차 다항식
+            slope = coeffs[0]  # 기울기 (음수여야 함)
+            
+            # 예측값과 실제값의 상관계수
+            predicted = np.polyval(coeffs, ring_radii)
+            correlation = np.corrcoef(ring_temps, predicted)[0, 1]
+            
+            # 기울기가 음수이고 상관계수가 높으면 타원형 패턴
+            if slope < -0.01 and correlation > 0.5:
+                # 타원형 적합도 점수 (0.0 ~ 1.0)
+                elliptical_score = float(np.clip(
+                    (abs(slope) * 10.0 + correlation) / 2.0,
+                    0.0, 1.0
+                ))
+                return elliptical_score
+        
+        # 5. 원형도(circularity) 계산
+        # 온도가 높은 영역의 형태가 원형/타원형에 가까운지 확인
+        threshold_temp = float(np.percentile(roi_temps, 70))  # 상위 30% 온도
+        hot_mask = roi_temps >= threshold_temp
+        
+        if np.sum(hot_mask) < 3:
+            return 0.0
+        
+        # 온도가 높은 영역의 중심과 분산 계산
+        hot_y, hot_x = np.where(hot_mask)
+        if len(hot_x) < 3:
+            return 0.0
+        
+        hot_center_x = float(np.mean(hot_x))
+        hot_center_y = float(np.mean(hot_y))
+        
+        # 중심으로부터의 거리 분산
+        hot_distances = np.hypot(hot_x - hot_center_x, hot_y - hot_center_y)
+        dist_std = float(np.std(hot_distances))
+        dist_mean = float(np.mean(hot_distances))
+        
+        # 원형도: 표준편차가 평균의 일정 비율 이하면 원형에 가까움
+        if dist_mean > 0:
+            circularity = 1.0 - min(1.0, dist_std / dist_mean)
+            return float(circularity * 0.5)  # 원형도는 50% 가중치
+        
+        return 0.0
+    
     def _validate_face_temperature(self, frame: np.ndarray, bbox) -> bool:
         """
         온도 기반 얼굴 검증 강화: 얼굴의 온도 분포 패턴 검증
         얼굴은 이마 부분이 가장 뜨거우며, 균일하지 않은 온도 분포를 가짐
+        타원형/원형 온도 분포 패턴도 검증
         """
         if bbox is None:
             return False
@@ -1013,6 +1169,14 @@ class ThermalFaceDetector:
         if temp_std < 0.3:  # 너무 균일하면 의심 (다른 열원일 가능성)
             logger.debug(f"⚠️ 얼굴 온도 분산 너무 낮음: std={temp_std:.2f}°C (의심: 균일한 열원)")
             return False
+        
+        # 5. 타원형/원형 온도 분포 패턴 검증 (새로 추가)
+        # 얼굴은 중심에서 둥글게 온도가 분포되는 경향
+        elliptical_score = self._check_elliptical_pattern(roi_temps)
+        if elliptical_score < 0.2:  # 타원형 적합도가 너무 낮으면 의심
+            logger.debug(f"⚠️ 타원형 패턴 적합도 낮음: {elliptical_score:.2f} (의심: 불규칙한 열원)")
+            # 타원형 패턴이 없어도 다른 검증을 통과하면 허용 (엄격하지 않게)
+            # return False  # 주석 처리: 타원형 패턴은 보너스 점수로만 사용
         
         return True
     
@@ -1553,7 +1717,10 @@ class ROIManager:
     def __init__(self, patch_size: int = 6, use_weighted_mean: bool = True, 
                  center_weight: float = 0.9, dynamic_positioning: bool = True,
                  use_center_only: bool = False,
-                 landmark_detector: Optional[FaceLandmarkDetector] = None):
+                 landmark_detector: Optional[FaceLandmarkDetector] = None,
+                 enable_subdivision: bool = True,
+                 subdivision_threshold: float = 0.15,
+                 subdivision_min_size: int = 8):
         self.buffers: Dict[str, deque] = {}
         self.patch_size = patch_size
         self.use_weighted_mean = use_weighted_mean
@@ -1561,6 +1728,9 @@ class ROIManager:
         self.dynamic_positioning = dynamic_positioning
         self.use_center_only = use_center_only
         self.landmark_detector = landmark_detector
+        self.enable_subdivision = enable_subdivision
+        self.subdivision_threshold = subdivision_threshold
+        self.subdivision_min_size = subdivision_min_size
 
     def _find_face_center_from_temp(self, frame: np.ndarray, bbox) -> Tuple[float, float]:
         """온도 분포를 기반으로 얼굴 중심 위치 찾기 (원형/타원형 고려)"""
@@ -1590,6 +1760,57 @@ class ROIManager:
             # 가중치가 없으면 기하학적 중심
             return x + w/2, y + h/2
 
+    def _create_subdivided_rois(self, x: int, y: int, w: int, h: int) -> Dict[str, Tuple[float, float, float, float]]:
+        """
+        얼굴이 클 때 ROI를 세분화하여 더 많은 측정점 생성
+        얼굴을 가까이 가면 더 세밀한 온도 분포 측정 가능
+        """
+        rois = {}
+        
+        # 이마를 좌/중/우로 3분할
+        forehead_h = 0.22 * h
+        forehead_y = y + 0.05 * h
+        rois['forehead_left'] = (x + 0.10*w, forehead_y, 0.25*w, forehead_h)
+        rois['forehead_center'] = (x + 0.35*w, forehead_y, 0.30*w, forehead_h)
+        rois['forehead_right'] = (x + 0.65*w, forehead_y, 0.25*w, forehead_h)
+        # 기존 forehead도 유지 (호환성)
+        rois['forehead'] = (x + 0.25*w, forehead_y, 0.5*w, forehead_h)
+        
+        # 왼쪽 볼을 상/하로 2분할
+        l_cheek_w = 0.28 * w
+        l_cheek_h = 0.14 * h
+        rois['l_cheek_top'] = (x + 0.05*w, y + 0.40*h, l_cheek_w, l_cheek_h)
+        rois['l_cheek_bottom'] = (x + 0.05*w, y + 0.54*h, l_cheek_w, l_cheek_h)
+        # 기존 l_cheek도 유지
+        rois['l_cheek'] = (x + 0.05*w, y + 0.45*h, l_cheek_w, 0.28*h)
+        
+        # 오른쪽 볼을 상/하로 2분할
+        r_cheek_w = 0.28 * w
+        r_cheek_h = 0.14 * h
+        rois['r_cheek_top'] = (x + 0.67*w, y + 0.40*h, r_cheek_w, r_cheek_h)
+        rois['r_cheek_bottom'] = (x + 0.67*w, y + 0.54*h, r_cheek_w, r_cheek_h)
+        # 기존 r_cheek도 유지
+        rois['r_cheek'] = (x + 0.67*w, y + 0.45*h, r_cheek_w, 0.28*h)
+        
+        # 코를 상/하로 2분할
+        nose_w = 0.20 * w
+        nose_h = 0.11 * h
+        rois['nose_top'] = (x + 0.40*w, y + 0.35*h, nose_w, nose_h)
+        rois['nose_bottom'] = (x + 0.40*w, y + 0.46*h, nose_w, nose_h)
+        # 기존 nose도 유지
+        rois['nose'] = (x + 0.40*w, y + 0.40*h, nose_w, 0.22*h)
+        
+        # 추가: 눈썹 영역 (이마 바로 아래, 혈류가 잘 보이는 영역)
+        eyebrow_h = 0.08 * h
+        rois['eyebrow_left'] = (x + 0.15*w, y + 0.25*h, 0.20*w, eyebrow_h)
+        rois['eyebrow_right'] = (x + 0.65*w, y + 0.25*h, 0.20*w, eyebrow_h)
+        
+        # 추가: 턱 영역 (얼굴 하단)
+        chin_h = 0.10 * h
+        rois['chin'] = (x + 0.30*w, y + 0.70*h, 0.40*w, chin_h)
+        
+        return rois
+    
     def _adjust_roi_position(self, frame: np.ndarray, bbox, base_roi: Tuple[float, float, float, float],
                             face_center_x: float, face_center_y: float) -> Tuple[int, int, int, int]:
         """온도 분포 기반으로 ROI 위치 동적 조정"""
@@ -1687,13 +1908,42 @@ class ROIManager:
         # 얼굴 중심 찾기 (온도 분포 기반)
         face_center_x, face_center_y = self._find_face_center_from_temp(frame, bbox)
         
+        # 얼굴 크기 계산 (프레임 대비 비율)
+        H_frame, W_frame = frame.shape[:2]
+        face_area = w * h
+        frame_area = H_frame * W_frame
+        face_area_ratio = face_area / frame_area if frame_area > 0 else 0.0
+        
+        # 얼굴이 클 때 ROI 세분화 (가까이 갈수록 더 세분화)
+        should_subdivide = (self.enable_subdivision and 
+                           face_area_ratio >= self.subdivision_threshold and
+                           w >= self.subdivision_min_size * 2 and 
+                           h >= self.subdivision_min_size * 2)
+        
+        # 세분화 상태 로깅 (주기적으로)
+        if not hasattr(self, '_last_subdivision_log_ts'):
+            self._last_subdivision_log_ts = 0.0
+        if time.time() - self._last_subdivision_log_ts > 5.0:  # 5초마다 로그
+            if should_subdivide:
+                logger.info(f"✅ ROI 세분화 활성화: 얼굴 크기={face_area_ratio*100:.1f}% (임계값: {self.subdivision_threshold*100:.1f}%), "
+                           f"bbox={w}x{h}px (최소: {self.subdivision_min_size*2}px)")
+            else:
+                logger.debug(f"⚠️ ROI 세분화 비활성화: 얼굴 크기={face_area_ratio*100:.1f}% < {self.subdivision_threshold*100:.1f}% 또는 "
+                           f"bbox={w}x{h}px < {self.subdivision_min_size*2}px")
+            self._last_subdivision_log_ts = time.time()
+        
         # 기본 ROI 위치 (기존 방식 - fallback)
-        base_rois = {
-            'forehead': (x + 0.25*w, y + 0.05*h, 0.5*w, 0.22*h),
-            'l_cheek': (x + 0.05*w, y + 0.45*h, 0.28*w, 0.28*h),
-            'r_cheek': (x + 0.67*w, y + 0.45*h, 0.28*w, 0.28*h),
-            'nose': (x + 0.40*w, y + 0.40*h, 0.20*w, 0.22*h),
-        }
+        if should_subdivide:
+            # 얼굴이 클 때: ROI를 더 세분화
+            base_rois = self._create_subdivided_rois(x, y, w, h)
+        else:
+            # 기본 ROI (4개)
+            base_rois = {
+                'forehead': (x + 0.25*w, y + 0.05*h, 0.5*w, 0.22*h),
+                'l_cheek': (x + 0.05*w, y + 0.45*h, 0.28*w, 0.28*h),
+                'r_cheek': (x + 0.67*w, y + 0.45*h, 0.28*w, 0.28*h),
+                'nose': (x + 0.40*w, y + 0.40*h, 0.20*w, 0.22*h),
+            }
         
         rois = {}
         vals = {}
@@ -1719,6 +1969,12 @@ class ROIManager:
             ry = max(0, min(ry, frame.shape[0]-1))
             rw = max(2, min(rw, frame.shape[1]-rx))
             rh = max(2, min(rh, frame.shape[0]-ry))
+            
+            # 세분화된 ROI 최소 크기 보장
+            if should_subdivide and self.subdivision_min_size > 0:
+                if rw < self.subdivision_min_size or rh < self.subdivision_min_size:
+                    # 너무 작은 ROI는 스킵 (신호가 약해질 수 있음)
+                    continue
             
             region = frame[ry:ry+rh, rx:rx+rw]
             if region.size == 0:
@@ -2162,7 +2418,10 @@ class ThermalrPPG:
             center_weight=cfg.roi_center_weight,
             dynamic_positioning=cfg.roi_dynamic_positioning,
             use_center_only=cfg.roi_use_center_only,
-            landmark_detector=self.landmark_detector
+            landmark_detector=self.landmark_detector,
+            enable_subdivision=cfg.roi_enable_subdivision,
+            subdivision_threshold=cfg.roi_subdivision_threshold,
+            subdivision_min_size=cfg.roi_subdivision_min_size
         )
         self.proc = SignalProc(cfg.sampling_rate, band=cfg.target_hr_range)
         self.resp = RespEstimator(cfg.sampling_rate)
@@ -2291,7 +2550,22 @@ class ThermalrPPG:
     def _compute_hr(self):
         need = int(self.cfg.sampling_rate * max(8, self.cfg.min_measurement_duration))
         hrs, qs, snrs, harms, names = [], [], [], [], []
-        for name in ['forehead', 'l_cheek', 'r_cheek', 'nose']:
+        
+        # 기본 ROI + 세분화된 ROI 모두 포함
+        # 세분화된 ROI가 있으면 우선 사용, 없으면 기본 ROI 사용
+        roi_names = []
+        for base_name in ['forehead', 'l_cheek', 'r_cheek', 'nose']:
+            # 세분화된 ROI 확인
+            subdivided = [k for k in self.buffers.keys() if k.startswith(base_name + '_')]
+            if subdivided:
+                roi_names.extend(subdivided)
+            else:
+                roi_names.append(base_name)
+        
+        # 중복 제거 및 정렬
+        roi_names = sorted(set(roi_names))
+        
+        for name in roi_names:
             x = self._preprocess_series(name, need)
             if x is None:
                 continue
@@ -2864,8 +3138,18 @@ class ThermalrPPG:
     #- 이마가 상대적으로 신뢰도 높으면 1.15배
     #- 이마 땀/저SNR이면 0.9배
     #- 코/볼이 HR 합의에서 어긋나면 0.85배
+    #- 세분화된 ROI도 지원 (forehead_left, forehead_center 등)
     #"""
-        boost = {'forehead': 1.0, 'l_cheek': 1.0, 'r_cheek': 1.0, 'nose': 1.0}
+        # 모든 ROI에 대해 기본 가중치 초기화 (세분화된 ROI 포함)
+        boost = {}
+        for roi_name in diag.keys():
+            boost[roi_name] = 1.0
+        
+        # 기본 ROI가 없으면 기본값 설정
+        for base_name in ['forehead', 'l_cheek', 'r_cheek', 'nose']:
+            if base_name not in boost:
+                boost[base_name] = 1.0
+        
         if not diag:
             return boost
 
@@ -2875,28 +3159,47 @@ class ThermalrPPG:
         med_snr  = float(np.median(snrs)) if snrs else 0.0
         med_harm = float(np.median(harms)) if harms else 0.0
 
-        f = diag.get('forehead')
+        # 이마 관련 ROI 찾기 (forehead, forehead_left, forehead_center, forehead_right)
+        forehead_rois = [k for k in diag.keys() if 'forehead' in k]
         perspiring = (time.time() < self._persp_until)
 
-        # 이마 보정
-        if f:
-            # 이마가 전반보다 확실히 좋으면 +15%
-            if (f.get('snr', 0.0) >= med_snr + 0.2) and (f.get('harm', 0.0) >= med_harm):
-                boost['forehead'] *= 1.15
-            # 땀/저SNR이면 감산
-            if perspiring or (f.get('snr', 0.0) < self.cfg.snr_face_min):
-                boost['forehead'] *= 0.90
+        # 이마 보정 (모든 이마 관련 ROI에 적용)
+        for f_name in forehead_rois:
+            f = diag.get(f_name)
+            if f:
+                # 이마가 전반보다 확실히 좋으면 +15%
+                if (f.get('snr', 0.0) >= med_snr + 0.2) and (f.get('harm', 0.0) >= med_harm):
+                    boost[f_name] = boost.get(f_name, 1.0) * 1.15
+                # 땀/저SNR이면 감산
+                if perspiring or (f.get('snr', 0.0) < self.cfg.snr_face_min):
+                    boost[f_name] = boost.get(f_name, 1.0) * 0.90
 
         # ROI 간 HR 불일치가 크면(튀는 ROI 감산)
         hrs = [d.get('hr') for d in diag.values() if 'hr' in d]
         if len(hrs) >= 2:
             hr_max, hr_min = max(hrs), min(hrs)
             if (hr_max - hr_min) > self.cfg.hr_agreement_bpm:
-                f_hr = f.get('hr') if f else None
-                for k in ('nose', 'l_cheek', 'r_cheek'):
-                    if k in diag and f_hr is not None and 'hr' in diag[k]:
-                        if abs(diag[k]['hr'] - f_hr) > (self.cfg.hr_agreement_bpm * 0.5):
-                            boost[k] *= 0.85
+                # 이마 ROI의 HR을 기준으로 사용
+                f_hr = None
+                for f_name in forehead_rois:
+                    if f_name in diag and 'hr' in diag[f_name]:
+                        f_hr = diag[f_name]['hr']
+                        break
+                
+                if f_hr is not None:
+                    # 코/볼 관련 ROI 찾기
+                    for k in diag.keys():
+                        if k not in forehead_rois and 'hr' in diag[k]:
+                            if abs(diag[k]['hr'] - f_hr) > (self.cfg.hr_agreement_bpm * 0.5):
+                                boost[k] = boost.get(k, 1.0) * 0.85
+        
+        # 세분화된 ROI에 대한 추가 보정
+        # 이마 중앙이 가장 신뢰도 높을 가능성이 높음
+        if 'forehead_center' in diag:
+            f_center = diag['forehead_center']
+            if f_center.get('snr', 0.0) > med_snr + 0.3:
+                boost['forehead_center'] = boost.get('forehead_center', 1.0) * 1.1
+        
         return boost
 
     def _rotate_sensor(self, img: np.ndarray, deg: float) -> np.ndarray:
