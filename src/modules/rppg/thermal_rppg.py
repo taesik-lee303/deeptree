@@ -893,8 +893,8 @@ class ThermalFaceDetector:
                         if n_samples >= 2:
                             dist_bins = np.linspace(0, max_dist, n_samples)
                             temp_by_dist = []
-                            for i in range(len(dist_bins) - 1):
-                                mask = (dist_map >= dist_bins[i]) & (dist_map < dist_bins[i+1])
+                            for bin_idx in range(len(dist_bins) - 1):
+                                mask = (dist_map >= dist_bins[bin_idx]) & (dist_map < dist_bins[bin_idx+1])
                                 if np.sum(mask) > 0:
                                     temp_by_dist.append(float(np.mean(region_normalized[mask])))
                             
@@ -916,9 +916,14 @@ class ThermalFaceDetector:
         if best_idx < 1:
             return None
         
-        # 인덱스 범위 안전 체크
+        # 인덱스 범위 안전 체크 (로깅 빈도 제한)
         if best_idx >= stats.shape[0]:
-            logger.warning(f"⚠️ best_idx({best_idx})가 stats 범위({stats.shape[0]})를 벗어남. None 반환")
+            # 로그가 너무 많이 찍히지 않도록 주기적으로만 로깅
+            if not hasattr(self, '_last_idx_warn_ts'):
+                self._last_idx_warn_ts = 0.0
+            if time.time() - self._last_idx_warn_ts > 5.0:  # 5초마다만 로그
+                logger.warning(f"⚠️ best_idx({best_idx})가 stats 범위({stats.shape[0]})를 벗어남. None 반환")
+                self._last_idx_warn_ts = time.time()
             return None
         
         x, y, bw, bh, _ = stats[best_idx]
