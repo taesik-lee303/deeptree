@@ -132,6 +132,8 @@ def main():
     start_time = time.time()
     no_data_count = 0
     received_any = False
+    buffer = b""  # 바이트 버퍼
+    last_byte_time = None
 
     while True:
         try:
@@ -151,35 +153,75 @@ def main():
             if hasattr(ser, 'in_waiting'):
                 bytes_waiting = ser.in_waiting
                 if bytes_waiting > 0:
-                    print(f"[DEBUG] {bytes_waiting} bytes waiting in buffer")
+                    # 바이트 읽기 (readline 대신 read 사용)
+                    chunk = ser.read(bytes_waiting)
+                    buffer += chunk
+                    last_byte_time = time.time()
+                    received_any = True
+                    
+                    # 디버그: 수신한 raw 바이트 출력
+                    if len(chunk) > 0:
+                        hex_str = ' '.join(f'{b:02x}' for b in chunk[:20])
+                        ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in chunk[:20])
+                        print(f"\n[RAW] Received {len(chunk)} bytes: {hex_str} | {ascii_str}")
             
-            line = ser.readline()
-            
-            if not line:
-                no_data_count += 1
-                # 5초마다 대기 상태 알림
-                if no_data_count % 5 == 0:
-                    elapsed = int(time.time() - start_time)
-                    print(f"  Waiting... ({elapsed}s elapsed, {no_data_count} empty reads)", end="\r")
+            # 버퍼에서 완전한 라인 찾기 (\n으로 끝나는)
+            if b'\n' in buffer:
+                # 첫 번째 라인 추출
+                line_bytes, buffer = buffer.split(b'\n', 1)
+                
+                if not line_bytes:
+                    continue
+                
+                # 디버그: 라인 바이트 출력
+                hex_str = ' '.join(f'{b:02x}' for b in line_bytes[:50])
+                print(f"[LINE] Extracted line ({len(line_bytes)} bytes): {hex_str}")
+                
+                try:
+                    s = line_bytes.decode("utf-8", errors="replace").strip()
+                except Exception as e:
+                    print(f"✗ Decode error: {e}")
+                    print(f"  Raw bytes (hex): {hex_str}")
+                    continue
+                
+                if not s:
+                    continue
+                
+                print(f"✓ Decoded string: {s[:200]}")
+                
+                try:
+                    data = json.loads(s)
+                    print(f"✓ JSON parsed successfully")
+                except json.JSONDecodeError as e:
+                    print(f"✗ JSON parse error: {e}")
+                    print(f"  String length: {len(s)}")
+                    print(f"  String (first 200 chars): {s[:200]}")
+                    print(f"  String (last 200 chars): {s[-200:]}")
+                    print(f"  Raw bytes (hex): {hex_str}")
+                    # 버퍼에 남은 데이터 확인
+                    if buffer:
+                        print(f"  Remaining buffer: {buffer[:50]}")
+                    continue
+            else:
+                # 라인이 완성되지 않음 - 타임아웃 체크
+                if last_byte_time and (time.time() - last_byte_time) > 2.0:
+                    # 2초 동안 새 바이트가 없으면 버퍼 비우기
+                    if buffer:
+                        print(f"\n⚠ Timeout waiting for line end. Buffer: {buffer[:100]}")
+                        buffer = b""
+                    last_byte_time = None
+                
+                if not received_any:
+                    no_data_count += 1
+                    # 5초마다 대기 상태 알림
+                    if no_data_count % 5 == 0:
+                        elapsed = int(time.time() - start_time)
+                        print(f"  Waiting... ({elapsed}s elapsed, {no_data_count} empty reads)", end="\r")
+                
+                time.sleep(0.01)  # 짧은 대기
                 continue
             
-            # 데이터 수신 성공
-            no_data_count = 0
-            received_any = True
-            s = line.decode("utf-8", errors="ignore").strip()
-            
-            if not s:
-                continue
-            
-            print(f"\n✓ Data received: {s[:200]}")
-            
-            try:
-                data = json.loads(s)
-                print(f"✓ JSON parsed successfully")
-            except Exception as e:
-                print(f"✗ JSON parse error: {e}")
-                print(f"  Raw data: {s[:120]}")
-                continue
+            # JSON 파싱 성공 - 필드 추출
 
             fields = extract_fields(data)
             print(f"✓ Fields extracted: {fields}")
