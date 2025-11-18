@@ -90,32 +90,105 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dev", default="/dev/serial0")
     ap.add_argument("--baud", type=int, default=9600)  # ← 피코 uart_module과 동일하게!
+    ap.add_argument("--timeout", type=int, default=30, help="Timeout in seconds (0 = infinite)")
     args = ap.parse_args()
 
-    ser = serial.Serial(args.dev, baudrate=args.baud, timeout=1)
-    print(f"Listening {args.dev} @ {args.baud} ...")
+    print(f"Opening UART: {args.dev} @ {args.baud} baud")
+    try:
+        ser = serial.Serial(args.dev, baudrate=args.baud, timeout=1)
+        print(f"✓ UART port opened successfully")
+        print(f"  Device: {ser.port}")
+        print(f"  Baudrate: {ser.baudrate}")
+        print(f"  Timeout: {ser.timeout}")
+        
+        # 버퍼 비우기
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        print("✓ Buffers cleared")
+        
+        print(f"\nListening for data... (timeout: {args.timeout}s, 0=infinite)")
+        print("If no data received, check:")
+        print("  1. Pico is powered on and running")
+        print("  2. Pico TX (GP0) → Pi RX (GPIO 15)")
+        print("  3. Pico RX (GP1) → Pi TX (GPIO 14)")
+        print("  4. GND connected")
+        print("  5. Baud rate matches (9600)")
+        print("  6. Serial port permissions")
+        print()
+        
+    except serial.SerialException as e:
+        print(f"✗ Failed to open serial port: {e}")
+        print("\nTroubleshooting:")
+        print("  1. Check port exists: ls -l /dev/serial0")
+        print("  2. Check permissions: sudo usermod -aG dialout $USER")
+        print("  3. Check if port is in use: lsof /dev/serial0")
+        return
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    start_time = time.time()
+    no_data_count = 0
+    received_any = False
 
     while True:
         try:
+            # 타임아웃 체크
+            if args.timeout > 0 and (time.time() - start_time) > args.timeout:
+                print(f"\nTimeout reached ({args.timeout}s)")
+                if not received_any:
+                    print("✗ No data received during timeout period")
+                    print("\nPossible causes:")
+                    print("  1. Pico is not sending data")
+                    print("  2. UART wiring issue")
+                    print("  3. Wrong baud rate")
+                    print("  4. Pico code not running")
+                break
+            
+            # 바이트 대기 확인
+            if hasattr(ser, 'in_waiting'):
+                bytes_waiting = ser.in_waiting
+                if bytes_waiting > 0:
+                    print(f"[DEBUG] {bytes_waiting} bytes waiting in buffer")
+            
             line = ser.readline()
+            
             if not line:
+                no_data_count += 1
+                # 5초마다 대기 상태 알림
+                if no_data_count % 5 == 0:
+                    elapsed = int(time.time() - start_time)
+                    print(f"  Waiting... ({elapsed}s elapsed, {no_data_count} empty reads)", end="\r")
                 continue
+            
+            # 데이터 수신 성공
+            no_data_count = 0
+            received_any = True
             s = line.decode("utf-8", errors="ignore").strip()
+            
             if not s:
                 continue
+            
+            print(f"\n✓ Data received: {s[:200]}")
+            
             try:
                 data = json.loads(s)
+                print(f"✓ JSON parsed successfully")
             except Exception as e:
-                print("[PARSE]", e, s[:120])
+                print(f"✗ JSON parse error: {e}")
+                print(f"  Raw data: {s[:120]}")
                 continue
 
             fields = extract_fields(data)
+            print(f"✓ Fields extracted: {fields}")
 
             # 보기 좋게 요약 출력 (없는 건 생략)
             parts = []
             if fields["ts"] is not None: parts.append(str(fields["ts"]))
-            if fields["device_id"] is not None: parts.append(fields["device_id"])
-            if fields["temp_c"] is not None: parts.append(f"T={fields['temp_c']}C")
+            if fields["device_id"] is not None: parts.append(f"device={fields['device_id']}")
+            if fields["temp_c"] is not None: parts.append(f"T={fields['temp_c']}°C")
             if fields["hum"] is not None: parts.append(f"H={fields['hum']}%")
             if fields["noise"] is not None: parts.append(f"noise={fields['noise']}")
             if fields["pir"] is not None: parts.append(f"pir={fields['pir']}")
@@ -124,16 +197,25 @@ def main():
             if fields["pm10"] is not None: parts.append(f"pm10={fields['pm10']}")
 
             if parts:
-                print(" | ".join(parts))
+                print("  → " + " | ".join(parts))
             else:
                 # 필드가 하나도 안 뽑히면 원본 한 줄 보여주기
-                print("[RAW]", s)
+                print(f"  [RAW] {s}")
 
         except KeyboardInterrupt:
+            print("\n\nInterrupted by user")
             break
         except Exception as e:
-            print("[UART ERR]", e)
+            print(f"\n[UART ERR] {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(0.3)
+    
+    ser.close()
+    if received_any:
+        print("\n✓ UART communication test completed successfully")
+    else:
+        print("\n✗ No data received. Check Pico and UART connection.")
 
 if __name__ == "__main__":
     main()
