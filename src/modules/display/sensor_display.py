@@ -200,7 +200,7 @@ sensor_data = {
 }
 data_lock = threading.Lock()
 
-DEFAULT_KAFKA_TOPICS = ["display-data", "sensor-events"]
+DEFAULT_KAFKA_TOPICS = ["sensors.uart", "display-data", "sensor-events"]
 DEFAULT_BOOTSTRAP_SERVERS = ["localhost:9092"]
 
 try:

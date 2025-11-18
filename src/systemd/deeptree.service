@@ -1,0 +1,46 @@
+[Unit]
+Description=DeepTree System Launcher
+Documentation=https://github.com/your-repo/deeptree
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# 프로젝트 경로 (실제 경로에 맞게 수정 필요)
+WorkingDirectory=/home/pi/deeptree/src
+
+# 환경 변수 설정
+Environment="PATH=/home/pi/deeptree/src/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="RPPG_DEBUG_VISUAL=0"
+
+# .env 파일 로드 (선택적)
+# EnvironmentFile=/home/pi/deeptree/src/.env
+
+# 실행 명령
+ExecStart=/home/pi/deeptree/src/venv/bin/python -m apps.launcher
+
+# 재시작 정책
+Restart=always
+RestartSec=10
+
+# 로그 설정
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deeptree
+
+# 프로세스 관리
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# 리소스 제한 (선택적)
+# MemoryLimit=1G
+# CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target
+
