@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 # ---------- 모니터 좌표 탐색 ----------
-def find_monitor_offset(prefer_size=(480,480), fallback=(3840,0)):
+def find_monitor_offset(prefer_size=(240,240), fallback=(3840,0)):
     try:
         out = subprocess.run(["xrandr","--listmonitors"], capture_output=True, text=True, timeout=3)
         if out.returncode == 0:
@@ -56,10 +56,11 @@ import pygame
 pygame.init()
 
 # ---------- 설정 ----------
-SIZE = 480
+# 2.1인치 원형 디스플레이 (240x240 해상도)
+SIZE = 240
 CENTER = SIZE//2
-RADIUS = CENTER-22
-WATER_RADIUS = CENTER-40
+RADIUS = CENTER-11  # 비율 유지 (480->240이므로 절반)
+WATER_RADIUS = CENTER-20  # 비율 유지
 FPS = 60
 
 # 파도
@@ -69,22 +70,22 @@ WAVE_FAST_A = 15.0
 WAVE_FAST_SPEED = 0.25
 WAVE_KS = (0.018, 0.028, 0.042)
 
-# 카드 - 개선된 크기와 스타일 (겹침 방지를 위해 크기 조정)
+# 카드 - 2.1인치 디스플레이에 맞게 크기 조정 (겹침 방지)
 CARD_SIZES = {
-    "primary": (130, 65),    # 주요 센서 (온도, 습도) - 크기 약간 축소
-    "secondary": (110, 55),   # 보조 센서 (소음, PM) - 크기 약간 축소
-    "tertiary": (90, 45)      # 기타 센서 - 크기 약간 축소
+    "primary": (65, 32),    # 주요 센서 (온도, 습도) - 240x240에 맞게 축소
+    "secondary": (55, 28),   # 보조 센서 (소음, PM) - 240x240에 맞게 축소
+    "tertiary": (45, 22)      # 기타 센서 - 240x240에 맞게 축소
 }
-CARD_RADIUS = 16
-CARD_ALPHA = 220
-CARD_SHADOW = (12, 36, 55, 85)
-CARD_STROKE = (255, 255, 255, 100)
-CARD_HILITE = (255, 255, 255, 60)
-DOT_R = 8
+CARD_RADIUS = 8  # 비율 유지
+CARD_ALPHA = 230  # 더 선명하게
+CARD_SHADOW = (12, 36, 55, 100)  # 더 진한 그림자
+CARD_STROKE = (255, 255, 255, 120)  # 더 선명한 테두리
+CARD_HILITE = (255, 255, 255, 80)  # 더 밝은 하이라이트
+DOT_R = 4  # 비율 유지
 
-# 상단 텍스트 위치 (아래로 이동)
-TOP_TIME_Y = 75
-TOP_DATE_Y = 105
+# 상단 텍스트 위치 (2.1인치에 맞게 조정)
+TOP_TIME_Y = 38
+TOP_DATE_Y = 52
 
 # 개선된 색상 팔레트
 COL_BG_RING = (200, 210, 220)
@@ -140,11 +141,12 @@ def make_font(size, bold=False):
         return f
     return pygame.font.SysFont("Arial", size, bold=bold)
 
-font_time  = make_font(36, True)
-font_date  = make_font(18, True)
-font_label = make_font(14, True)
-font_value = make_font(20, True)
-font_wait  = make_font(18, False)
+# 2.1인치 디스플레이에 맞게 폰트 크기 조정
+font_time  = make_font(18, True)   # 36 -> 18
+font_date  = make_font(9, True)    # 18 -> 9
+font_label = make_font(7, True)    # 14 -> 7
+font_value = make_font(10, True)   # 20 -> 10
+font_wait  = make_font(9, False)   # 18 -> 9
 
 # 라벨 (항상 한글로 표시)
 LABELS_KR = {"temp":"온도","noise":"소음","humi":"습도","pm25":"PM2.5","pm10":"PM10"}
@@ -604,7 +606,7 @@ def draw_water(surface, wave, data):
     surf_y = wave["surf_y"]
     min_x = CENTER - radius
     max_x = CENTER + radius
-    steps = 300  # 더 부드러운 곡선을 위해 증가
+    steps = 150  # 2.1인치에 맞게 조정 (300 -> 150)
     
     # 물 표면 포인트 계산
     pts = []
@@ -717,51 +719,51 @@ def draw_glass_card(surface, rect, card_type="secondary", pulse_alpha=1.0):
     surface.blit(body, (center_x-radius, center_y-radius))
 
 def draw_time_and_date(surface):
-    """개선된 시간/날짜 표시"""
+    """개선된 시간/날짜 표시 (2.1인치 디스플레이용)"""
     now = datetime.now()
     
-    # 시간 배경 (반투명)
-    time_bg = pygame.Surface((200, 50), pygame.SRCALPHA)
-    pygame.draw.rect(time_bg, (255, 255, 255, 100), (0, 0, 200, 50), border_radius=25)
-    surface.blit(time_bg, (CENTER - 100, TOP_TIME_Y - 25))
+    # 시간 배경 (반투명) - 2.1인치에 맞게 크기 조정
+    time_bg = pygame.Surface((100, 25), pygame.SRCALPHA)
+    pygame.draw.rect(time_bg, (255, 255, 255, 120), (0, 0, 100, 25), border_radius=12)
+    surface.blit(time_bg, (CENTER - 50, TOP_TIME_Y - 12))
     
     # 시간 텍스트 (그림자 효과)
-    time_text = now.strftime("%H:%M:%S")
+    time_text = now.strftime("%H:%M")
     time_surf = font_time.render(time_text, True, COL_TEXT)
-    time_shadow = font_time.render(time_text, True, (0, 0, 0, 100))
+    time_shadow = font_time.render(time_text, True, (0, 0, 0, 120))
     
     # 그림자 그리기
-    blit_center(surface, time_shadow, CENTER + 2, TOP_TIME_Y + 2)
+    blit_center(surface, time_shadow, CENTER + 1, TOP_TIME_Y + 1)
     blit_center(surface, time_surf, CENTER, TOP_TIME_Y)
     
-    # 날짜 텍스트
-    date_text = now.strftime("%Y년 %m월 %d일")
+    # 날짜 텍스트 (간소화)
+    date_text = now.strftime("%m/%d")
     date_surf = font_date.render(date_text, True, COL_TEXT)
     blit_center(surface, date_surf, CENTER, TOP_DATE_Y)
 
-def check_card_collision(rect1, rect2, margin=15):
-    """두 카드 간 충돌 감지 - 마진 증가로 겹침 방지"""
+def check_card_collision(rect1, rect2, margin=8):
+    """두 카드 간 충돌 감지 - 마진 증가로 겹침 방지 (2.1인치에 맞게)"""
     return (abs(rect1.centerx - rect2.centerx) < (rect1.width + rect2.width) // 2 + margin and
             abs(rect1.centery - rect2.centery) < (rect1.height + rect2.height) // 2 + margin)
 
-def optimize_card_positions(items, base_radius=80):
-    """카드 위치 최적화 - 겹침 방지"""
+def optimize_card_positions(items, base_radius=40):
+    """카드 위치 최적화 - 겹침 방지 (2.1인치 디스플레이용)"""
     num_items = len(items)
     if num_items == 0:
         return []
     
-    # 카드 개수에 따른 동적 반지름 조정
+    # 카드 개수에 따른 동적 반지름 조정 (2.1인치에 맞게)
     if num_items >= 4:
         # 카드가 많을수록 더 큰 원에 배치
-        base_radius = min(100, 60 + num_items * 8)
+        base_radius = min(50, 30 + num_items * 4)
     
-    # 기본 위치 계산
+    # 기본 위치 계산 (2.1인치에 맞게 크기 조정)
     if num_items == 1:
-        positions = [(CENTER, CENTER - 60)]
+        positions = [(CENTER, CENTER - 30)]
     elif num_items == 2:
-        positions = [(CENTER - 80, CENTER - 40), (CENTER + 80, CENTER - 40)]
+        positions = [(CENTER - 40, CENTER - 20), (CENTER + 40, CENTER - 20)]
     elif num_items == 3:
-        positions = [(CENTER - 90, CENTER - 20), (CENTER, CENTER - 60), (CENTER + 90, CENTER - 20)]
+        positions = [(CENTER - 45, CENTER - 10), (CENTER, CENTER - 30), (CENTER + 45, CENTER - 10)]
     else:
         # 4개 이상일 때 원형 배치
         angle_step = 2 * math.pi / num_items
@@ -802,8 +804,8 @@ def optimize_card_positions(items, base_radius=80):
                         dy = math.sin(angle)
                         distance = 1
                     
-                    # 분리 거리 계산 - 더 큰 여유 공간
-                    min_distance = (card_rects[i].width + card_rects[j].width) // 2 + 30
+                    # 분리 거리 계산 - 더 큰 여유 공간 (2.1인치에 맞게)
+                    min_distance = (card_rects[i].width + card_rects[j].width) // 2 + 15
                     move_distance = (min_distance - distance) / 2
                     
                     # 위치 조정
@@ -816,8 +818,8 @@ def optimize_card_positions(items, base_radius=80):
                     new_x2 = card_rects[j].centerx - move_x
                     new_y2 = card_rects[j].centery - move_y
                     
-                    # 경계 내로 제한 - 더 엄격한 경계 체크
-                    max_distance = WATER_RADIUS - max(card_rects[i].height, card_rects[j].height) // 2 - 20
+                    # 경계 내로 제한 - 더 엄격한 경계 체크 (2.1인치에 맞게)
+                    max_distance = WATER_RADIUS - max(card_rects[i].height, card_rects[j].height) // 2 - 10
                     for new_x, new_y, rect in [(new_x1, new_y1, card_rects[i]), (new_x2, new_y2, card_rects[j])]:
                         distance_from_center = math.sqrt((new_x - CENTER)**2 + (new_y - CENTER)**2)
                         if distance_from_center > max_distance:
@@ -854,27 +856,27 @@ def draw_sensor_cards(surface, data, wave, wave_offset_local):
         items.append(("pm10", f"{p10}", color_pm10(p10), "tertiary"))
 
     if not items:
-        blit_center(surface, font_wait.render("센서 데이터 대기중…", True, COL_WAIT), CENTER, CENTER+100)
+        blit_center(surface, font_wait.render("센서 데이터 대기중…", True, COL_WAIT), CENTER, CENTER+50)
         return
 
     # 최적화된 위치 계산
     positions = optimize_card_positions(items)
 
     for (key, value, vcolor, card_type), (x, y) in zip(items, positions):
-        # 파도 효과 적용
+        # 파도 효과 적용 (2.1인치에 맞게 조정)
         phase = buoy_phases.setdefault(key, random.random() * math.tau)
         wave_y = wave["surf_y"](x) if abs(x - CENTER) < wave["radius"] else y
         bob = math.sin(wave_offset_local * 1.2 + phase) * (wave["amplitude"] * 0.15 + 1.0)
-        final_y = wave_y - 30 + bob
+        final_y = wave_y - 15 + bob  # 30 -> 15 (2.1인치에 맞게)
         
         # 카드 크기 결정
         card_w, card_h = CARD_SIZES[card_type]
         rect = pygame.Rect(0, 0, card_w, card_h)
         rect.center = (int(x), int(final_y))
         
-        # 경계 보정 - 더 엄격한 경계 체크
+        # 경계 보정 - 더 엄격한 경계 체크 (2.1인치에 맞게)
         distance_from_center = math.sqrt((x - CENTER)**2 + (final_y - CENTER)**2)
-        max_distance = WATER_RADIUS - card_h//2 - 15  # 여유 공간 증가
+        max_distance = WATER_RADIUS - card_h//2 - 8  # 여유 공간 (2.1인치에 맞게)
         if distance_from_center > max_distance:
             # 카드가 원 밖으로 나가지 않도록 조정
             angle = math.atan2(final_y - CENTER, x - CENTER)
@@ -888,23 +890,23 @@ def draw_sensor_cards(surface, data, wave, wave_offset_local):
         # 카드 그리기
         draw_glass_card(surface, rect, card_type, pulse_alpha)
 
-        # 상태 표시 점 (더 큰 점)
-        status_dot_r = DOT_R + (2 if card_type == "primary" else 0)
-        pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 15), status_dot_r)
+        # 상태 표시 점 (2.1인치에 맞게 조정)
+        status_dot_r = DOT_R + (1 if card_type == "primary" else 0)
+        pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 8), status_dot_r)
         
         # 상태 표시 링 (위험 상태일 때)
         if vcolor == COLOR_SYSTEM["hazardous"]:
-            pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 15), 
-                             status_dot_r + 3, width=2)
+            pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 8), 
+                             status_dot_r + 2, width=1)
 
         # 라벨/값 텍스트
         label_txt = LABELS.get(key, key.upper())
         label_surf = font_label.render(label_txt, True, COL_TEXT)
         value_surf = font_value.render(value, True, vcolor)
         
-        # 텍스트 중앙 정렬
-        blit_center(surface, label_surf, rect.centerx, rect.centery - 8)
-        blit_center(surface, value_surf, rect.centerx, rect.centery + 12)
+        # 텍스트 중앙 정렬 (2.1인치에 맞게 조정)
+        blit_center(surface, label_surf, rect.centerx, rect.centery - 4)
+        blit_center(surface, value_surf, rect.centerx, rect.centery + 6)
 
 # ---------- 메인 루프 ----------
 wave_offset = 0.0

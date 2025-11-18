@@ -355,6 +355,9 @@ class MP4Player:
         if self.config.player_command == "ffplay":
             cmd.extend(["-hide_banner", "-loglevel", "quiet"])
 
+            # 2.1인치 원형 디스플레이에 맞게 크기 조정 (240x240)
+            cmd.extend(["-x", "240", "-y", "240"])
+
             if self.config.fullscreen:
                 cmd.append("-fs")
 

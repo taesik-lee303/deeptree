@@ -59,31 +59,43 @@ class ProcessController:
             env=self.env,
         )
 
-    async def stop(self, kill_after: float = 10.0) -> None:
+    async def stop(self, kill_after: float = 5.0) -> None:
+        """프로세스 종료 - 케어콜 디스플레이가 완전히 사라지도록 개선"""
         if not self.process:
             return
         if self.process.returncode is not None:
             self.process = None
             return
         print(f"[switcher] stopping {self.spec.name}")
+        
+        # SIGTERM 전송
         try:
             self.process.terminate()
         except ProcessLookupError:
             self.process = None
             return
 
+        # 프로세스 종료 대기
         try:
             await asyncio.wait_for(self.process.wait(), timeout=kill_after)
         except asyncio.TimeoutError:
             print(f"[switcher] killing {self.spec.name} after timeout")
             try:
+                # 강제 종료
                 self.process.kill()
+                await self.process.wait()
             except ProcessLookupError:
                 pass
-            else:
-                await self.process.wait()
         finally:
+            # 프로세스가 완전히 종료되었는지 확인
+            if self.process and self.process.returncode is None:
+                try:
+                    self.process.kill()
+                    await asyncio.wait_for(self.process.wait(), timeout=1.0)
+                except (ProcessLookupError, asyncio.TimeoutError):
+                    pass
             self.process = None
+            print(f"[switcher] {self.spec.name} stopped completely")
 
     async def poll_exit(self) -> Optional[int]:
         if not self.process:
@@ -120,11 +132,25 @@ class DisplaySwitcher:
         self._last_carecall_event = time.time()
 
     async def switch_to_sensor(self) -> None:
+        """센서 디스플레이로 전환 - 케어콜 디스플레이 완전 종료 보장"""
         if self.state == "sensor":
             await self.sensor.ensure_running()
             return
         print("[switcher] switching display: carecall -> sensor")
+        
+        # 케어콜 디스플레이 완전 종료
         await self.carecall.stop()
+        
+        # 추가 대기 시간으로 프로세스가 완전히 종료되도록 보장
+        await asyncio.sleep(0.5)
+        
+        # 케어콜 프로세스가 여전히 실행 중이면 강제 종료
+        if self.carecall.running:
+            print("[switcher] force stopping carecall display")
+            await self.carecall.stop()
+            await asyncio.sleep(0.3)
+        
+        # 센서 디스플레이 시작
         await self.sensor.ensure_running()
         self.state = "sensor"
         self._last_carecall_event = 0.0
