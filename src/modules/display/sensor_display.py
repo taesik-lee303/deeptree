@@ -379,16 +379,33 @@ def kafka_consume():
     kwargs.pop("key_deserializer", None)
     kwargs.setdefault("consumer_timeout_ms", 1000)
     kwargs.setdefault("enable_auto_commit", True)
+    
+    # Consumer Group ID 확인 및 로그
+    group_id = kwargs.get("group_id")
+    auto_offset_reset = kwargs.get("auto_offset_reset", "latest")
 
     bootstrap = kwargs.get("bootstrap_servers")
     # 한글 인코딩 문제 방지를 위해 영문으로 출력
     print(f"[SensorDisplay] Kafka connecting: topics={topics}, bootstrap={bootstrap}")
+    print(f"[SensorDisplay] Consumer config: group_id={group_id}, auto_offset_reset={auto_offset_reset}")
 
     try:
         consumer = KafkaConsumer(*topics, value_deserializer=lambda x: x, **kwargs)
         print("[SensorDisplay] Kafka consumer created successfully")
+        
+        # Consumer가 실제로 할당된 파티션 확인
+        assignment = consumer.assignment()
+        if assignment:
+            print(f"[SensorDisplay] Assigned partitions: {assignment}")
+        else:
+            print("[SensorDisplay] WARNING: No partitions assigned! Check if:")
+            print("  - Topic exists: sensors.uart")
+            print("  - UART Producer is running and sending data")
+            print("  - Consumer group is not blocked by another consumer")
     except Exception as e:
         print(f"[SensorDisplay] Kafka connection failed: {e}")
+        import traceback
+        traceback.print_exc()
         return
 
     message_count = 0
@@ -396,6 +413,26 @@ def kafka_consume():
     no_data_count = 0
     
     print("[SensorDisplay] Waiting for Kafka messages...")
+    
+    # Consumer가 파티션에 할당될 때까지 대기
+    import time as time_module
+    max_wait = 10
+    waited = 0
+    while not consumer.assignment() and waited < max_wait:
+        time_module.sleep(0.5)
+        waited += 0.5
+        consumer.poll(timeout_ms=100)
+    
+    if not consumer.assignment():
+        print("[SensorDisplay] ERROR: Consumer failed to get partition assignment!")
+        print("[SensorDisplay] Possible causes:")
+        print("  1. Topic 'sensors.uart' does not exist")
+        print("  2. No data has been published to the topic yet")
+        print("  3. Another consumer with same group_id is blocking")
+        print("[SensorDisplay] Try:")
+        print("  - Run UART Producer: python -m networks.kafka.uart_producer")
+        print("  - Check topic exists: kafka-topics --list --bootstrap-server localhost:9092")
+        print("  - Use different group_id or set KAFKA_OFFSET_RESET=earliest")
     
     try:
         while True:
@@ -413,6 +450,12 @@ def kafka_consume():
                 # 10초마다 대기 중임을 알림 (더 자주 알림)
                 if no_data_count % 10 == 0:
                     print(f"[SensorDisplay] No messages received yet... (waited {no_data_count} polls, ~{no_data_count} seconds)")
+                    # 파티션 할당 상태 재확인
+                    assignment = consumer.assignment()
+                    if assignment:
+                        print(f"[SensorDisplay] Still assigned to partitions: {assignment}")
+                    else:
+                        print("[SensorDisplay] WARNING: Lost partition assignment!")
                 continue
             
             # 데이터 수신했으므로 카운터 리셋

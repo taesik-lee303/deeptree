@@ -62,16 +62,31 @@ class UartKafkaProducer:
         except Exception as exc:
             raise RuntimeError(f"Kafka Producer 생성 실패: {exc}") from exc
 
-        print(f"[Producer] UART 포트 열기 시도: {self.settings.dev}")
+        print(f"[Producer] Opening UART port: {self.settings.dev}")
         try:
             self.serial = serial.Serial(
                 self.settings.dev,
                 baudrate=self.settings.baudrate,
                 timeout=1,
             )
-            print(f"[Producer] UART 포트 열기 완료: {self.settings.dev} @ {self.settings.baudrate}")
+            print(f"[Producer] UART port opened: {self.settings.dev} @ {self.settings.baudrate}")
+            
+            # UART 포트 정보 출력
+            print(f"[Producer] UART port info:")
+            print(f"  - Device: {self.serial.port}")
+            print(f"  - Baudrate: {self.serial.baudrate}")
+            print(f"  - Timeout: {self.serial.timeout}")
+            print(f"  - Bytesize: {self.serial.bytesize}")
+            print(f"  - Parity: {self.serial.parity}")
+            print(f"  - Stopbits: {self.serial.stopbits}")
+            
+            # 버퍼 비우기
+            self.serial.reset_input_buffer()
+            self.serial.reset_output_buffer()
+            print("[Producer] UART buffers cleared")
+            
         except Exception as exc:
-            raise RuntimeError(f"UART 열기 실패 ({self.settings.dev}): {exc}") from exc
+            raise RuntimeError(f"Failed to open UART ({self.settings.dev}): {exc}") from exc
 
     def close(self) -> None:
         try:
@@ -88,55 +103,75 @@ class UartKafkaProducer:
             pass
 
     def run(self) -> None:
-        print("[Producer] 데이터 수신 대기 중...")
+        print("[Producer] Waiting for UART data...")
+        print(f"[Producer] UART device: {self.settings.dev}, baudrate: {self.settings.baudrate}")
+        print(f"[Producer] Kafka topic: {self.settings.topic}")
+        print("[Producer] If no data received, check:")
+        print("  - Pico is sending data")
+        print("  - UART connection (TX/RX wires)")
+        print("  - Baud rate matches (should be 9600)")
+        print("  - Serial port permissions: sudo usermod -aG dialout $USER")
+        
         last_flush = time.time()
         message_count = 0
         last_log_time = time.time()
+        no_data_count = 0
         
         while True:
             try:
                 line = self.serial.readline()
                 if not line:
+                    no_data_count += 1
+                    # 10초마다 대기 상태 알림
+                    if no_data_count % 10 == 0:
+                        print(f"[Producer] Still waiting for UART data... (waited {no_data_count * 0.1:.1f} seconds)")
+                        # UART 포트 상태 확인
+                        if hasattr(self.serial, 'in_waiting'):
+                            bytes_waiting = self.serial.in_waiting
+                            if bytes_waiting > 0:
+                                print(f"[Producer] WARNING: {bytes_waiting} bytes waiting but readline() returned empty!")
                     continue
+                
+                # 데이터 수신 성공
+                no_data_count = 0
                 raw = line.decode(self.settings.encoding, errors="ignore").strip()
                 if not raw:
                     continue
                 
-                # 디버그: 수신한 원본 데이터 로그 (10초마다)
+                # 디버그: 수신한 원본 데이터 로그
                 now = time.time()
-                if now - last_log_time > 10:
-                    print(f"[Producer] UART 데이터 수신: {raw[:100]}")
+                if self.debug or message_count == 0 or (now - last_log_time > 10):
+                    print(f"[Producer] UART data received: {raw[:200]}")
                     last_log_time = now
                 
                 payload = self._parse_payload(raw)
                 if payload is None:
-                    if self.debug or (now - last_log_time > 10):
-                        print(f"[Producer] 파싱 실패, 원본: {raw[:100]}")
+                    if self.debug:
+                        print(f"[Producer] Parse failed, raw: {raw[:100]}")
                     continue
                 
                 # Kafka로 전송
-                future = self.producer.send(self.settings.topic, payload)
+                self.producer.send(self.settings.topic, payload)
                 message_count += 1
                 
                 # 첫 메시지와 이후 10개마다 로그
                 if message_count <= 1 or message_count % 10 == 0:
-                    print(f"[Producer] Kafka 전송 ({message_count}번째): topic={self.settings.topic}, payload={json.dumps(payload, ensure_ascii=False)[:150]}")
+                    print(f"[Producer] Sent to Kafka ({message_count}): topic={self.settings.topic}")
+                    if self.debug:
+                        print(f"[Producer] Payload: {json.dumps(payload, ensure_ascii=False)[:200]}")
                 
-                if self.debug:
-                    print(f"[Producer] sent: {payload}")
-
                 now = time.time()
                 if now - last_flush >= self.settings.flush_interval:
                     try:
                         self.producer.flush(timeout=1.0)
                         last_flush = now
                     except Exception as exc:
-                        print(f"[Producer] flush 실패: {exc}")
+                        print(f"[Producer] Flush failed: {exc}")
             except KeyboardInterrupt:
-                print("[Producer] 종료 요청")
+                print("[Producer] Shutdown requested")
                 break
             except Exception as exc:
-                print(f"[Producer] 오류: {exc}")
+                print(f"[Producer] Error: {exc}")
                 import traceback
                 traceback.print_exc()
                 time.sleep(0.5)
