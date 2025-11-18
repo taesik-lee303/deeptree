@@ -215,11 +215,16 @@ else:
 
 ALIASES = {
     "temp":"temperature",
+    "temp_c":"temperature",  # UART Producer가 보내는 형식
+    "temperature":"temperature",
     "temperature_c":"temperature",
     "hum":"humidity",
+    "humidity":"humidity",
     "humidity_pct":"humidity",
     "pm25":"pm2_5",
     "pm_2_5":"pm2_5",
+    "pm2_5":"pm2_5",
+    "pm10":"pm10",
     "noise":"noise_level",
     "sound":"noise_level",
     "pir":"motion_detected",
@@ -356,16 +361,16 @@ def extract_sensor_values(payload: Dict[str, Any]) -> Dict[str, Any]:
 def kafka_consume():
     if not KAFKA_ENABLED:
         reason = f" ({_KAFKA_IMPORT_ERROR})" if "_KAFKA_IMPORT_ERROR" in globals() and _KAFKA_IMPORT_ERROR else ""
-        print("[i] Kafka ??? ?? ? ?? ?? ???? ?????." + reason)
+        print("[i] Kafka 라이브러리를 사용할 수 없습니다." + reason)
         return
 
     topics = resolve_kafka_topics()
     if not topics:
-        print("[i] Kafka ?? ??? ?? ?? ???? ?????.")
+        print("[i] Kafka 토픽이 설정되지 않았습니다.")
         return
 
     if kafka_settings is None and "_KAFKA_SETTINGS_IMPORT_ERROR" in globals() and _KAFKA_SETTINGS_IMPORT_ERROR:
-        print(f"[i] Kafka ?? ?? ??: {_KAFKA_SETTINGS_IMPORT_ERROR}. ????? ?????.")
+        print(f"[i] Kafka 설정 오류: {_KAFKA_SETTINGS_IMPORT_ERROR}. 기본값을 사용합니다.")
 
     encoding = resolve_value_encoding()
     kwargs = resolve_kafka_kwargs()
@@ -376,32 +381,67 @@ def kafka_consume():
     kwargs.setdefault("enable_auto_commit", True)
 
     bootstrap = kwargs.get("bootstrap_servers")
-    print(f"[i] Kafka ?? ??: topics={topics}, bootstrap={bootstrap}")
+    # 한글 인코딩 문제 방지를 위해 영문으로 출력
+    print(f"[SensorDisplay] Kafka connecting: topics={topics}, bootstrap={bootstrap}")
 
     try:
         consumer = KafkaConsumer(*topics, value_deserializer=lambda x: x, **kwargs)
+        print("[SensorDisplay] Kafka consumer created successfully")
     except Exception as e:
-        print("[!] Kafka ?? ??:", e)
+        print(f"[SensorDisplay] Kafka connection failed: {e}")
         return
 
+    message_count = 0
+    last_log_time = time.time()
+    no_data_count = 0
+    
+    print("[SensorDisplay] Waiting for Kafka messages...")
+    
     try:
         while True:
             try:
                 records = consumer.poll(timeout_ms=1000)
             except Exception as e:
-                print("[!] Kafka poll ??:", e)
+                print(f"[SensorDisplay] Kafka poll error: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(1.0)
                 continue
+            
             if not records:
+                no_data_count += 1
+                # 10초마다 대기 중임을 알림 (더 자주 알림)
+                if no_data_count % 10 == 0:
+                    print(f"[SensorDisplay] No messages received yet... (waited {no_data_count} polls, ~{no_data_count} seconds)")
                 continue
+            
+            # 데이터 수신했으므로 카운터 리셋
+            no_data_count = 0
+            
             for batch in records.values():
                 for msg in batch:
                     payload = decode_payload(msg.value, encoding)
                     if payload is None:
+                        print("[SensorDisplay] Payload decode failed")
                         continue
+                    
+                    # 첫 메시지와 10개마다 원본 페이로드 로그
+                    if message_count == 0 or message_count % 10 == 0:
+                        print(f"[SensorDisplay] Message received ({message_count + 1}): {json.dumps(payload, ensure_ascii=False)[:200]}")
+                    
                     updates = extract_sensor_values(payload)
                     if not updates:
+                        # 디버그: 업데이트가 없는 경우 로그 출력
+                        now = time.time()
+                        if now - last_log_time > 10:
+                            print(f"[SensorDisplay] Received but no updates extracted: {json.dumps(payload, ensure_ascii=False)[:200]}")
+                            last_log_time = now
                         continue
+                    
+                    message_count += 1
+                    # 첫 메시지와 이후 10개마다 로그 출력
+                    if message_count <= 1 or message_count % 10 == 0:
+                        print(f"[SensorDisplay] Sensor data updated ({message_count}): {updates}")
                     with data_lock:
                         sensor_data.update(updates)
     finally:

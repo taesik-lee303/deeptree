@@ -90,6 +90,9 @@ class UartKafkaProducer:
     def run(self) -> None:
         print("[Producer] 데이터 수신 대기 중...")
         last_flush = time.time()
+        message_count = 0
+        last_log_time = time.time()
+        
         while True:
             try:
                 line = self.serial.readline()
@@ -98,12 +101,29 @@ class UartKafkaProducer:
                 raw = line.decode(self.settings.encoding, errors="ignore").strip()
                 if not raw:
                     continue
+                
+                # 디버그: 수신한 원본 데이터 로그 (10초마다)
+                now = time.time()
+                if now - last_log_time > 10:
+                    print(f"[Producer] UART 데이터 수신: {raw[:100]}")
+                    last_log_time = now
+                
                 payload = self._parse_payload(raw)
                 if payload is None:
+                    if self.debug or (now - last_log_time > 10):
+                        print(f"[Producer] 파싱 실패, 원본: {raw[:100]}")
                     continue
-                self.producer.send(self.settings.topic, payload)
+                
+                # Kafka로 전송
+                future = self.producer.send(self.settings.topic, payload)
+                message_count += 1
+                
+                # 첫 메시지와 이후 10개마다 로그
+                if message_count <= 1 or message_count % 10 == 0:
+                    print(f"[Producer] Kafka 전송 ({message_count}번째): topic={self.settings.topic}, payload={json.dumps(payload, ensure_ascii=False)[:150]}")
+                
                 if self.debug:
-                    print(f"[KafkaProducer] sent: {payload}")
+                    print(f"[Producer] sent: {payload}")
 
                 now = time.time()
                 if now - last_flush >= self.settings.flush_interval:
@@ -111,12 +131,14 @@ class UartKafkaProducer:
                         self.producer.flush(timeout=1.0)
                         last_flush = now
                     except Exception as exc:
-                        print(f"[KafkaProducer] flush 실패: {exc}")
+                        print(f"[Producer] flush 실패: {exc}")
             except KeyboardInterrupt:
-                print("[KafkaProducer] 종료 요청")
+                print("[Producer] 종료 요청")
                 break
             except Exception as exc:
-                print(f"[KafkaProducer] 오류: {exc}")
+                print(f"[Producer] 오류: {exc}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(0.5)
         self.close()
 
@@ -125,7 +147,7 @@ class UartKafkaProducer:
             data = json.loads(raw)
         except Exception as exc:
             if self.debug:
-                print(f"[KafkaProducer] JSON 파싱 실패: {exc} :: {raw[:80]!r}")
+                print(f"[Producer] JSON 파싱 실패: {exc} :: {raw[:80]!r}")
             return None
 
         fields = extract_fields(data)
@@ -142,6 +164,12 @@ class UartKafkaProducer:
             "raw": data,
             "ingested_at": time.time(),
         }
+        
+        # 디버그: 추출된 필드 확인
+        if self.debug:
+            print(f"[Producer] 추출된 필드: {fields}")
+            print(f"[Producer] 생성된 페이로드: {payload}")
+        
         return payload
 
 
