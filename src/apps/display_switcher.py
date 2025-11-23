@@ -827,23 +827,27 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"[switcher] ===== carecall event received: {data} =====")
 
                 if isinstance(data, dict):
+                    # end=True면 센서로 전환 (가장 우선순위)
+                    if data.get("end"):
+                        print("[switcher] End event detected, switching to sensor")
+                        await switcher.switch_to_sensor()
+                    # start=True이면 케어콜로 전환 (restored가 아닌 실제 대화 시작만)
+                    elif data.get("start") and not data.get("restored"):
+                        print(f"[switcher] Start event detected (start={data.get('start')}, restored={data.get('restored')}), switching to carecall")
+                        await switcher.handle_carecall_event()
+                    # emotion이 있고 restored가 아니면 케어콜로 전환
+                    elif data.get("emotion") and not data.get("restored"):
+                        print(f"[switcher] Emotion event detected (emotion={data.get('emotion')}, restored={data.get('restored')}), switching to carecall")
+                        await switcher.handle_carecall_event()
                     # restored=True 이벤트는 실제 대화 시작이 아니므로 디스플레이 전환하지 않고 상태만 업데이트
-                    if data.get("restored"):
+                    elif data.get("restored"):
                         print("[switcher] Restored event detected (from old messages), updating state only (no display switch)")
                         # restored 이벤트는 _last_carecall_event만 업데이트하여 idle_timeout 방지
                         switcher._last_carecall_event = time.time()
                         print(f"[switcher] Updated last_carecall_event to {switcher._last_carecall_event} (no display switch)")
-                    # end=True면 센서로 전환
-                    elif data.get("end"):
-                        print("[switcher] End event detected, switching to sensor")
-                        await switcher.switch_to_sensor()
-                    # start=True 또는 emotion이 있으면 케어콜로 전환 (restored가 아닌 실제 이벤트만)
-                    elif data.get("start") or data.get("emotion"):
-                        print(f"[switcher] Start/emotion event detected (start={data.get('start')}, emotion={data.get('emotion')}), switching to carecall")
-                        await switcher.handle_carecall_event()
                     else:
-                        # 기본적으로 케어콜 이벤트로 처리
-                        print("[switcher] Unknown event type, treating as carecall event")
+                        # 기본적으로 케어콜 이벤트로 처리 (emotion이나 start가 없어도)
+                        print(f"[switcher] Unknown event type (keys: {list(data.keys())}), treating as carecall event")
                         await switcher.handle_carecall_event()
                 else:
                     # dict가 아니면 기본적으로 케어콜 이벤트로 처리

@@ -34,7 +34,7 @@ class WhisperConfig:
 @dataclass
 class OpenAIConfig:
     """OpenAI API 설정"""
-    api_key: str = "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"
+    api_key: str = "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"
     tts_model: str = "tts-1"
     tts_voice: str = "nova"
     whisper_model: str = "whisper-1"
