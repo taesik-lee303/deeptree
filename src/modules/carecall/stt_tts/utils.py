@@ -631,12 +631,20 @@ class ConversationManager:
         payload.update({k: v for k, v in extra.items() if v is not None})
         
         try:
-            if getattr(self, "kafka", None):
+            # Kafka 클라이언트 확인 및 초기화 상태 로깅
+            kafka_client = getattr(self, "kafka", None)
+            if kafka_client:
                 self.logger.info(f"[Emotion] Sending emotion event to Kafka: {payload}")
+                self.logger.info(f"[Emotion] Kafka client type: {type(kafka_client)}, enabled: {emotion_settings.enabled}")
                 self.kafka.send(payload)
-                self.logger.info(f"[Emotion] Emotion event sent successfully")
+                self.logger.info(f"[Emotion] Emotion event sent successfully to topic: {emotion_settings.topic}")
             else:
+                # Kafka 클라이언트가 없는 이유 로깅
                 self.logger.warning(f"[Emotion] Kafka client not available, cannot send emotion event: {payload}")
+                self.logger.warning(f"[Emotion] emotion_settings.enabled: {emotion_settings.enabled}")
+                self.logger.warning(f"[Emotion] Kafka client attribute exists: {hasattr(self, 'kafka')}")
+                if hasattr(self, 'kafka'):
+                    self.logger.warning(f"[Emotion] Kafka client value: {self.kafka}")
         except Exception as e:
             self.logger.error(f"[Emotion] Kafka emotion emit error: {e}")
             import traceback

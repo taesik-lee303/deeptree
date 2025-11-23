@@ -50,23 +50,39 @@ class ProcessController:
 
     async def start(self) -> None:
         if self.running:
+            print(f"[switcher] {self.spec.name} is already running, skipping start")
             return
         self._last_start = time.time()
         print(f"[switcher] starting {self.spec.name}: {' '.join(map(shlex.quote, self.spec.command))}")
         print(f"[switcher] working directory: {self.cwd}")
         print(f"[switcher] environment: DISPLAY={self.env.get('DISPLAY', 'not set')}, XAUTHORITY={self.env.get('XAUTHORITY', 'not set')}")
+        print(f"[switcher] PYTHONPATH: {self.env.get('PYTHONPATH', 'not set')}")
         try:
             # 프로세스 시작 (stdout/stderr는 journald로 자동 전달됨)
+            # stderr를 캡처하여 오류 확인 가능하도록 개선
             self.process = await asyncio.create_subprocess_exec(
                 *self.spec.command,
                 cwd=str(self.cwd),
                 env=self.env,
+                stdout=asyncio.subprocess.PIPE,  # stdout 캡처
+                stderr=asyncio.subprocess.PIPE,  # stderr 캡처
             )
             # 프로세스가 시작되었는지 확인
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.3)  # 대기 시간 증가 (0.2 -> 0.3)
+            
             if self.process.returncode is not None:
-                # 프로세스가 즉시 종료됨
+                # 프로세스가 즉시 종료됨 - stderr 읽기 시도
+                stderr_output = ""
+                try:
+                    if self.process.stderr:
+                        stderr_data = await asyncio.wait_for(self.process.stderr.read(), timeout=1.0)
+                        stderr_output = stderr_data.decode('utf-8', errors='ignore')[:500]  # 최대 500자
+                except Exception:
+                    pass
+                
                 print(f"[switcher] ERROR: {self.spec.name} process exited immediately with code {self.process.returncode}")
+                if stderr_output:
+                    print(f"[switcher] stderr output: {stderr_output}")
                 print(f"[switcher] Check journalctl for error details: sudo journalctl -u deeptree.service -n 100 | grep -i '{self.spec.name}'")
                 print(f"[switcher] Command was: {' '.join(map(shlex.quote, self.spec.command))}")
                 self.process = None
@@ -209,56 +225,107 @@ class DisplaySwitcher:
         # 센서 디스플레이가 완전히 종료된 후 케어콜 디스플레이 시작
         print("[switcher] Starting carecall display after sensor display stopped...")
         carecall_started = False
-        try:
-            await self.carecall.start()
-            
-            # 프로세스가 시작되었는지 즉시 확인
-            if not self.carecall.process:
-                print("[switcher] ERROR: Carecall display process is None after start()")
-                raise Exception("Carecall display process is None")
-            
-            initial_pid = self.carecall.process.pid if self.carecall.process else None
-            print(f"[switcher] Carecall display process created (PID: {initial_pid})")
-            
-            # 프로세스가 즉시 종료되었는지 확인
-            await asyncio.sleep(0.3)
-            if self.carecall.process and self.carecall.process.returncode is not None:
-                exit_code = self.carecall.process.returncode
-                print(f"[switcher] ERROR: Carecall display process exited immediately with code {exit_code}")
-                print(f"[switcher] Check journalctl for error details: sudo journalctl -u deeptree.service -n 100 | grep -i 'carecall-display'")
-                raise Exception(f"Carecall display process exited immediately with code {exit_code}")
-            
-            # 프로세스가 실제로 시작되었는지 확인 (더 긴 대기 시간)
-            await asyncio.sleep(1.0)  # 프로세스 시작 및 윈도우 생성 대기
-            
-            # 프로세스가 실행 중인지 여러 번 확인
-            for check_attempt in range(5):  # 5번 확인으로 증가
-                if self.carecall.process is None:
-                    print(f"[switcher] ERROR: Carecall display process is None (check {check_attempt + 1}/5)")
-                    break
+        max_retries = 3  # 최대 3번 재시도
+        for retry in range(max_retries):
+            try:
+                print(f"[switcher] Carecall display start attempt {retry + 1}/{max_retries}")
+                await self.carecall.start()
                 
-                if self.carecall.process.returncode is not None:
-                    exit_code = self.carecall.process.returncode
-                    print(f"[switcher] ERROR: Carecall display process exited with code {exit_code} (check {check_attempt + 1}/5)")
-                    break
+                # 프로세스가 시작되었는지 즉시 확인
+                if not self.carecall.process:
+                    print(f"[switcher] ERROR: Carecall display process is None after start() (attempt {retry + 1}/{max_retries})")
+                    if retry < max_retries - 1:
+                        await asyncio.sleep(0.5)  # 재시도 전 대기
+                        continue
+                    raise Exception("Carecall display process is None")
                 
-                if self.carecall.running:
-                    carecall_pid = self.carecall.process.pid if self.carecall.process else None
-                    print(f"[switcher] Carecall display started successfully (PID: {carecall_pid}, check {check_attempt + 1}/5)")
-                    carecall_started = True
-                    break
-                else:
-                    print(f"[switcher] WARNING: Carecall display process not running yet (check {check_attempt + 1}/5), waiting...")
-                    await asyncio.sleep(0.5)
-            
-            if not carecall_started:
-                if self.carecall.process:
+                initial_pid = self.carecall.process.pid if self.carecall.process else None
+                print(f"[switcher] Carecall display process created (PID: {initial_pid}, attempt {retry + 1}/{max_retries})")
+                
+                # 프로세스가 즉시 종료되었는지 확인
+                await asyncio.sleep(0.5)  # 대기 시간 증가 (0.3 -> 0.5)
+                if self.carecall.process and self.carecall.process.returncode is not None:
                     exit_code = self.carecall.process.returncode
-                    print(f"[switcher] ERROR: Carecall display process failed to start (returncode: {exit_code})")
-                    print(f"[switcher] Check journalctl for error details: sudo journalctl -u deeptree.service -n 100 | grep -i 'carecall-display'")
+                    print(f"[switcher] ERROR: Carecall display process exited immediately with code {exit_code} (attempt {retry + 1}/{max_retries})")
+                    # stderr 읽기 시도
+                    stderr_output = ""
+                    try:
+                        if self.carecall.process.stderr:
+                            stderr_data = await asyncio.wait_for(self.carecall.process.stderr.read(), timeout=1.0)
+                            stderr_output = stderr_data.decode('utf-8', errors='ignore')[:500]
+                    except Exception:
+                        pass
+                    if stderr_output:
+                        print(f"[switcher] stderr output: {stderr_output}")
+                    if retry < max_retries - 1:
+                        self.carecall.process = None  # 프로세스 정리
+                        await asyncio.sleep(1.0)  # 재시도 전 대기
+                        continue
+                    raise Exception(f"Carecall display process exited immediately with code {exit_code}")
+                
+                # 프로세스가 실제로 시작되었는지 확인 (더 긴 대기 시간)
+                await asyncio.sleep(1.5)  # 대기 시간 증가 (1.0 -> 1.5)
+                
+                # 프로세스가 실행 중인지 여러 번 확인
+                for check_attempt in range(5):  # 5번 확인
+                    if self.carecall.process is None:
+                        print(f"[switcher] ERROR: Carecall display process is None (check {check_attempt + 1}/5)")
+                        break
+                    
+                    if self.carecall.process.returncode is not None:
+                        exit_code = self.carecall.process.returncode
+                        print(f"[switcher] ERROR: Carecall display process exited with code {exit_code} (check {check_attempt + 1}/5)")
+                        # stderr 읽기 시도
+                        stderr_output = ""
+                        try:
+                            if self.carecall.process.stderr:
+                                stderr_data = await asyncio.wait_for(self.carecall.process.stderr.read(), timeout=1.0)
+                                stderr_output = stderr_data.decode('utf-8', errors='ignore')[:500]
+                        except Exception:
+                            pass
+                        if stderr_output:
+                            print(f"[switcher] stderr output: {stderr_output}")
+                        break
+                    
+                    if self.carecall.running:
+                        carecall_pid = self.carecall.process.pid if self.carecall.process else None
+                        print(f"[switcher] Carecall display started successfully (PID: {carecall_pid}, check {check_attempt + 1}/5)")
+                        carecall_started = True
+                        break
+                    else:
+                        print(f"[switcher] WARNING: Carecall display process not running yet (check {check_attempt + 1}/5), waiting...")
+                        await asyncio.sleep(0.5)
+                
+                if carecall_started:
+                    break  # 성공했으면 재시도 루프 종료
+                elif retry < max_retries - 1:
+                    # 실패했지만 재시도 가능
+                    print(f"[switcher] Carecall display start failed, will retry (attempt {retry + 1}/{max_retries})")
+                    if self.carecall.process:
+                        try:
+                            self.carecall.process.kill()
+                            await asyncio.wait_for(self.carecall.process.wait(), timeout=1.0)
+                        except Exception:
+                            pass
+                        self.carecall.process = None
+                    await asyncio.sleep(1.0)  # 재시도 전 대기
+                    continue
                 else:
-                    print("[switcher] ERROR: Carecall display process is None")
-                raise Exception("Carecall display process not running after start")
+                    # 모든 재시도 실패
+                    if self.carecall.process:
+                        exit_code = self.carecall.process.returncode
+                        print(f"[switcher] ERROR: Carecall display process failed to start after {max_retries} attempts (returncode: {exit_code})")
+                        print(f"[switcher] Check journalctl for error details: sudo journalctl -u deeptree.service -n 100 | grep -i 'carecall-display'")
+                    else:
+                        print("[switcher] ERROR: Carecall display process is None after all retries")
+                    raise Exception("Carecall display process not running after all retries")
+            except Exception as e:
+                if retry < max_retries - 1:
+                    print(f"[switcher] Carecall display start error (attempt {retry + 1}/{max_retries}): {e}, will retry...")
+                    await asyncio.sleep(1.0)
+                    continue
+                else:
+                    raise  # 마지막 재시도 실패 시 예외 전파
         except Exception as e:
             print(f"[switcher] Carecall display start failed: {e}")
             import traceback
