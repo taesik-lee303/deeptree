@@ -145,14 +145,17 @@ class DeepCareSystem:
                         
                         self.is_running = False
                         
-                        # STT가 실행 중이면 정리
+                        # STT가 실행 중이면 정리 (stop_conversation에서 이미 정리했지만 이중 확인)
                         if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
-                            self.logger.info("Stopping STT after conversation end")
+                            self.logger.info("Stopping STT after conversation end (additional cleanup)")
                             try:
                                 self.stt_manager.stop()
-                                time.sleep(0.2)  # STT 정리 대기
+                                time.sleep(0.5)  # STT 정리 대기 (더 긴 대기)
                             except Exception as e:
                                 self.logger.warning(f"Error stopping STT: {e}")
+                        
+                        # 세션 종료 후 충분한 대기 시간 (리소스 정리 및 상태 안정화)
+                        time.sleep(0.5)
                         
                         self.logger.info("Conversation ended, waiting for next activation...")
                         
@@ -211,12 +214,16 @@ class DeepCareSystem:
                 self.logger.info("[Activation] STT is still running from previous session, stopping before activation wait")
                 try:
                     self.stt_manager.stop()
-                    time.sleep(0.5)  # STT 정리 대기 (더 긴 대기)
+                    time.sleep(0.8)  # STT 정리 대기 (더 긴 대기 - 완전한 정리 보장)
                     
-                    # 정리 후 상태 확인
+                    # 정리 후 상태 확인 및 강제 정리
                     is_still_running = getattr(self.stt_manager, 'is_running', False)
                     if is_still_running:
-                        self.logger.error("[Activation] STT Manager is still marked as running after stop()!")
+                        self.logger.warning("[Activation] STT Manager is still marked as running after stop(), forcing cleanup")
+                        self.stt_manager.is_running = False
+                        if hasattr(self.stt_manager, 'worker') and self.stt_manager.worker:
+                            self.stt_manager.worker = None
+                        time.sleep(0.3)
                     else:
                         self.logger.info("[Activation] STT stopped successfully")
                 except Exception as e:
@@ -224,7 +231,7 @@ class DeepCareSystem:
                     import traceback
                     self.logger.error(traceback.format_exc())
             
-            # 오디오 캡처가 완전히 정리되었는지 확인
+            # 오디오 캡처가 완전히 정리되었는지 확인 및 강제 정리
             if hasattr(self.stt_manager, 'audio_capture'):
                 audio_capture = self.stt_manager.audio_capture
                 is_capturing = getattr(audio_capture, 'is_capturing', False)
@@ -243,8 +250,16 @@ class DeepCareSystem:
                             audio_capture.stream = None
                         audio_capture.is_capturing = False
                         self.logger.info("[Activation] Audio capture force-cleaned")
+                        time.sleep(0.2)  # 정리 후 짧은 대기
                     except Exception as e:
                         self.logger.warning(f"[Activation] Error force-cleaning audio capture: {e}")
+            
+            # 최종 상태 확인
+            final_is_running = getattr(self.stt_manager, 'is_running', False)
+            if final_is_running:
+                self.logger.error("[Activation] CRITICAL: STT Manager is still running after cleanup! Forcing stop.")
+                self.stt_manager.is_running = False
+                time.sleep(0.5)
 
         activation_queue: queue.Queue[ActivationEvent] = queue.Queue(maxsize=1)
 

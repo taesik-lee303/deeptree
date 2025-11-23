@@ -776,14 +776,36 @@ class ConversationManager:
             pass
 
     def stop_conversation(self):
-        """대화 종료 - 재시작을 위해 리소스는 유지"""
+        """대화 종료 - 재시작을 위해 리소스는 유지하되 상태는 완전히 정리"""
         self.state = "IDLE"
 
+        # STT 완전 정리
         if self.stt:
             try:
                 self.stt.stop()
-            except Exception:
-                pass
+                # STT가 완전히 정리될 때까지 대기
+                time.sleep(0.5)
+                
+                # 상태 확인 및 강제 정리
+                if getattr(self.stt, 'is_running', False):
+                    self.logger.warning("STT still marked as running after stop(), forcing cleanup")
+                    self.stt.is_running = False
+                    if hasattr(self.stt, 'worker') and self.stt.worker:
+                        self.stt.worker = None
+                    if hasattr(self.stt, 'audio_capture'):
+                        audio_capture = self.stt.audio_capture
+                        if getattr(audio_capture, 'is_capturing', False):
+                            audio_capture.is_capturing = False
+                        if hasattr(audio_capture, 'stream') and audio_capture.stream:
+                            try:
+                                audio_capture.stream.stop()
+                                audio_capture.stream.close()
+                            except Exception:
+                                pass
+                            audio_capture.stream = None
+                    time.sleep(0.3)
+            except Exception as e:
+                self.logger.warning(f"Error stopping STT: {e}")
 
         # TTS와 AI 클라이언트는 재사용을 위해 닫지 않음
         # (close()가 실제로 리소스를 해제하지 않으므로 문제없음)
@@ -794,16 +816,24 @@ class ConversationManager:
             except Exception:
                 pass
 
-        # AI 클라이언트는 세션을 유지하여 재시작 시 재사용
-        # close() 메서드가 없을 수 있으므로 hasattr로 확인
+        # AI 클라이언트 세션 ID 초기화 (새로운 세션을 위해)
         if self.ai_client:
             try:
+                # 세션 ID를 None으로 초기화하여 다음 start_conversation에서 새 세션 생성
+                if hasattr(self.ai_client, 'current_session_id'):
+                    self.logger.info("Resetting AI client session ID for next conversation")
+                    self.ai_client.current_session_id = None
                 if hasattr(self.ai_client, 'close'):
                     self.ai_client.close()
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"Error resetting AI client: {e}")
 
-        self.logger.info("Conversation stopped")
+        # 대화 상태 초기화
+        self._guard_until = 0.0
+        self._last_ai_text = ""
+        self._last_ai_time = 0.0
+
+        self.logger.info("Conversation stopped and ready for next activation")
         self._emit_emotion("neutral", end=True, phase="end", timestamp=time.time())
 
 
