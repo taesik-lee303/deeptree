@@ -294,8 +294,49 @@ class DeepCareSystem:
                 else:
                     self.logger.info(f"[Activation] '{normalized}' is not a wake phrase")
 
+            # 오디오 장치가 완전히 해제될 때까지 대기 (재시작 전 필수)
+            if hasattr(self.stt_manager, 'audio_capture'):
+                audio_capture = self.stt_manager.audio_capture
+                max_wait = 2.0  # 최대 2초 대기
+                wait_start = time.time()
+                while (time.time() - wait_start) < max_wait:
+                    is_capturing = getattr(audio_capture, 'is_capturing', False)
+                    has_stream = hasattr(audio_capture, 'stream') and audio_capture.stream is not None
+                    if not is_capturing and not has_stream:
+                        break
+                    time.sleep(0.1)
+                else:
+                    # 타임아웃: 강제 정리
+                    self.logger.warning("[Activation] Audio device not released after timeout, forcing cleanup")
+                    try:
+                        if hasattr(audio_capture, 'stream') and audio_capture.stream is not None:
+                            try:
+                                audio_capture.stream.stop()
+                                audio_capture.stream.close()
+                            except Exception:
+                                pass
+                            audio_capture.stream = None
+                        audio_capture.is_capturing = False
+                        time.sleep(0.3)  # 강제 정리 후 대기
+                    except Exception as e:
+                        self.logger.warning(f"[Activation] Error in forced audio cleanup: {e}")
+
             try:
                 self.logger.info("Starting STT for wake phrase detection...")
+                # STT 시작 전 최종 상태 확인
+                if getattr(self.stt_manager, 'is_running', False):
+                    self.logger.warning("[Activation] STT still marked as running, forcing stop before start")
+                    try:
+                        self.stt_manager.stop()
+                        time.sleep(0.5)
+                    except Exception as e:
+                        self.logger.warning(f"[Activation] Error in final STT stop: {e}")
+                    # 강제 정리
+                    self.stt_manager.is_running = False
+                    if hasattr(self.stt_manager, 'worker'):
+                        self.stt_manager.worker = None
+                    time.sleep(0.3)
+                
                 self.stt_manager.start(on_transcribed=_on_transcribed)
                 stt_started = True
                 self.logger.info(
@@ -307,6 +348,21 @@ class DeepCareSystem:
                 self.logger.error("Failed to start STT for wake phrase detection: %s", exc)
                 import traceback
                 self.logger.error(traceback.format_exc())
+                # 실패 시 상태 완전히 정리
+                try:
+                    if hasattr(self.stt_manager, 'audio_capture'):
+                        audio_capture = self.stt_manager.audio_capture
+                        if hasattr(audio_capture, 'stream') and audio_capture.stream is not None:
+                            try:
+                                audio_capture.stream.stop()
+                                audio_capture.stream.close()
+                            except Exception:
+                                pass
+                            audio_capture.stream = None
+                        audio_capture.is_capturing = False
+                    self.stt_manager.is_running = False
+                except Exception:
+                    pass
 
         if not watcher_active:
             self.logger.warning("Sensor trigger watcher inactive; relying on voice wake-up only")

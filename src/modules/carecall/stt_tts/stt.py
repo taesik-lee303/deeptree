@@ -317,8 +317,25 @@ class VADAudioCapture:
 
     def start_capture(self):
         """오디오 캡처 시작"""
+        # 이미 캡처 중이면 먼저 완전히 정리
         if self.is_capturing:
-            return
+            self.logger.warning("Audio capture already marked as capturing, stopping before restart")
+            try:
+                self.stop_capture()
+                time.sleep(0.3)  # 정리 대기
+            except Exception as e:
+                self.logger.warning(f"Error stopping audio capture before restart: {e}")
+        
+        # 스트림이 남아있으면 강제 정리
+        if hasattr(self, 'stream') and self.stream is not None:
+            self.logger.warning("Audio stream still exists, forcing cleanup")
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
+            time.sleep(0.2)  # 정리 대기
 
         self.is_capturing = True
         device_idx = self._choose_device(self.audio_config.input_device)
@@ -351,19 +368,26 @@ class VADAudioCapture:
         )
 
     def stop_capture(self):
-        """오디오 캡처 중지"""
-        if not self.is_capturing:
+        """오디오 캡처 중지 - 완전한 정리 보장"""
+        if not self.is_capturing and not (hasattr(self, 'stream') and self.stream is not None):
             return
 
         self.is_capturing = False
-        if hasattr(self, 'stream'):
+        if hasattr(self, 'stream') and self.stream is not None:
             try:
                 self.stream.stop()
+                time.sleep(0.1)  # stop 후 짧은 대기
+            except Exception as e:
+                self.logger.debug(f"Error stopping audio stream: {e}")
+            try:
                 self.stream.close()
-            except Exception:
-                pass
+                time.sleep(0.1)  # close 후 짧은 대기
+            except Exception as e:
+                self.logger.debug(f"Error closing audio stream: {e}")
+            finally:
+                self.stream = None  # 명시적으로 None으로 설정
 
-        self.logger.info("Audio capture stopped")
+        self.logger.info("Audio capture stopped and cleaned")
 
 
 class STTManager:
