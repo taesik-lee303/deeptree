@@ -833,8 +833,20 @@ class ConversationManager:
         self._last_ai_text = ""
         self._last_ai_time = 0.0
 
-        self.logger.info("Conversation stopped and ready for next activation")
-        self._emit_emotion("neutral", end=True, phase="end", timestamp=time.time())
+        # 세션 종료 신호를 서버에 명시적으로 전송 (여러 번 시도하여 전송 보장)
+        self.logger.info("Sending session end signal to server...")
+        for attempt in range(3):  # 최대 3번 시도
+            try:
+                self._emit_emotion("neutral", end=True, phase="end", timestamp=time.time())
+                time.sleep(0.2)  # 전송 대기
+                self.logger.info(f"Session end signal sent (attempt {attempt + 1}/3)")
+            except Exception as e:
+                self.logger.warning(f"Error sending session end signal (attempt {attempt + 1}/3): {e}")
+        
+        # 서버에 종료 신호가 전달될 시간 확보
+        time.sleep(0.5)
+        
+        self.logger.info("Conversation stopped and session end signal sent to server")
 
 
 class FileUtils:

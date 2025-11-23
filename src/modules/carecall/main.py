@@ -100,101 +100,80 @@ class DeepCareSystem:
             return False
     
     def run_interactive_mode(self):
-        """대화형 모드 실행 - 무한 루프로 대화 종료 후 재활성화 대기"""
-        self.logger.info("Starting interactive conversation mode...")
-        loop_count = 0
+        """대화형 모드 실행 - 한 세션만 실행하고 종료"""
+        self.logger.info("Starting single conversation session...")
 
         try:
-            while not self.shutdown_event.is_set():
+            # 활성화 대기
+            self.logger.info("[Session] Waiting for activation...")
+            if not self.wait_for_activation():
+                self.logger.warning("[Session] Activation wait aborted, exiting")
+                return
+            self.logger.info("[Session] Activation completed, starting conversation...")
+
+            # 대화 시작 전 STT가 실행 중이면 정리
+            if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
+                self.logger.info("Stopping STT from activation phase before conversation start")
                 try:
-                    loop_count += 1
-                    self.logger.info(f"[MainLoop] Starting loop iteration #{loop_count}")
-                    
-                    # 활성화 대기
-                    self.logger.info("[MainLoop] Calling wait_for_activation()...")
-                    if not self.wait_for_activation():
-                        self.logger.warning("[MainLoop] Activation wait aborted, breaking loop")
-                        break
-                    self.logger.info("[MainLoop] Activation wait completed, starting conversation...")
-
-                    # 대화 시작 전 STT가 실행 중이면 정리
-                    if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
-                        self.logger.info("Stopping STT from activation phase before conversation start")
-                        try:
-                            self.stt_manager.stop()
-                            time.sleep(0.2)  # STT 정리 대기
-                        except Exception as e:
-                            self.logger.warning(f"Error stopping STT: {e}")
-
-                    # 대화 시작
-                    self.is_running = True
-                    try:
-                        self.conversation_manager.start_conversation()
-                        
-                        # 대화 진행 중 대기
-                        while self.is_running and not self.shutdown_event.is_set():
-                            time.sleep(0.1)
-                    finally:
-                        # 대화 종료
-                        try:
-                            self.conversation_manager.stop_conversation()
-                        except Exception as e:
-                            self.logger.error(f"Error stopping conversation: {e}")
-                            import traceback
-                            self.logger.error(traceback.format_exc())
-                        
-                        self.is_running = False
-                        
-                        # STT가 실행 중이면 정리 (stop_conversation에서 이미 정리했지만 이중 확인)
-                        if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
-                            self.logger.info("Stopping STT after conversation end (additional cleanup)")
-                            try:
-                                self.stt_manager.stop()
-                                time.sleep(0.5)  # STT 정리 대기 (더 긴 대기)
-                            except Exception as e:
-                                self.logger.warning(f"Error stopping STT: {e}")
-                        
-                        # 세션 종료 후 충분한 대기 시간 (리소스 정리 및 상태 안정화)
-                        time.sleep(0.5)
-                        
-                        self.logger.info("Conversation ended, waiting for next activation...")
-                        
-                        # 오디오 장치 상태 확인 및 진단
-                        try:
-                            self._diagnose_audio_device()
-                        except Exception as e:
-                            self.logger.warning(f"Error in audio device diagnosis: {e}")
-                        
-                        # 루프 계속 진행을 위한 명시적 로그
-                        self.logger.info("Loop continuing, will call wait_for_activation() again...")
-                
-                except KeyboardInterrupt:
-                    self.logger.info("Interactive mode interrupted by user")
-                    break
+                    self.stt_manager.stop()
+                    time.sleep(0.2)  # STT 정리 대기
                 except Exception as e:
-                    # 루프 내부 예외 처리 - 루프를 계속 진행
-                    self.logger.error(f"[MainLoop] Error in loop iteration #{loop_count}: {e}")
+                    self.logger.warning(f"Error stopping STT: {e}")
+
+            # 대화 시작
+            self.is_running = True
+            try:
+                self.conversation_manager.start_conversation()
+                
+                # 대화 진행 중 대기
+                while self.is_running and not self.shutdown_event.is_set():
+                    time.sleep(0.1)
+            finally:
+                # 대화 종료 및 완전한 정리
+                self.logger.info("[Session] Conversation ending, cleaning up...")
+                try:
+                    self.conversation_manager.stop_conversation()
+                except Exception as e:
+                    self.logger.error(f"Error stopping conversation: {e}")
                     import traceback
                     self.logger.error(traceback.format_exc())
-                    self.logger.info("[MainLoop] Continuing to next iteration despite error...")
-                    # 예외 발생 후 잠시 대기
-                    time.sleep(1.0)
+                
+                self.is_running = False
+                
+                # STT 완전 정리
+                if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
+                    self.logger.info("Stopping STT after conversation end")
+                    try:
+                        self.stt_manager.stop()
+                        time.sleep(0.5)  # STT 정리 대기
+                    except Exception as e:
+                        self.logger.warning(f"Error stopping STT: {e}")
+                
+                # 세션 종료 후 충분한 대기 시간 (서버에 종료 신호 전송 보장)
+                time.sleep(1.0)
+                
+                self.logger.info("[Session] Conversation session completed, exiting...")
 
         except KeyboardInterrupt:
-            self.logger.info("Interactive mode interrupted by user")
+            self.logger.info("Session interrupted by user")
         except Exception as e:
-            self.logger.error(f"Interactive mode error: {e}")
+            self.logger.error(f"Session error: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
         finally:
+            # 최종 정리
             if self.conversation_manager:
-                self.conversation_manager.stop_conversation()
+                try:
+                    self.conversation_manager.stop_conversation()
+                except Exception:
+                    pass
             # 최종 STT 정리
             if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
                 try:
                     self.stt_manager.stop()
                 except Exception:
                     pass
+            self.logger.info("[Session] All resources cleaned up, session ended")
 
     def wait_for_activation(self) -> bool:
         """센서/호출어 기반으로 케어콜 시작 조건을 대기."""
