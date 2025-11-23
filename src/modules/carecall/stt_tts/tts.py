@@ -160,13 +160,12 @@ class TTSManager:
 # tts.py 내 LocalCommandHandler 클래스를 아래로 교체
 
 class LocalCommandHandler:
-    """로컬 명령어 처리기"""
+    """필러 문구 제공기 (로컬 명령어 처리 제거)"""
     def __init__(self, tts_manager: TTSManager, conversation_manager=None):
         self.tts = tts_manager
-        self.conversation_manager = conversation_manager  # ConversationManager 참조 추가
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # ✨ 필러 문구 리스트 추가 (AttributeError 원인 제거)
+        # 필러 문구 리스트
         self.filler_phrases = [
             "음... 생각해보는 중이에요.",
             "잠시만요, 확인해볼게요.",
@@ -174,111 +173,9 @@ class LocalCommandHandler:
             "알아보고 있어요.",
         ]
 
-        # 로컬 명령어 매핑
-        self.commands = {
-            "지금 몇 시": self._handle_time,
-            "현재 시간": self._handle_time,
-            "오늘 날짜": self._handle_date,
-            "오늘 몇일": self._handle_date,
-            "고마워": self._handle_thanks,
-            "고맙다": self._handle_thanks,
-            "감사": self._handle_thanks,
-            "잘가": self._handle_goodbye,
-            "안녕": self._handle_goodbye,
-            "종료": self._handle_exit,
-            "끝": self._handle_exit,
-            "멈춰": self._handle_exit,
-        }
-
     def get_filler_phrase(self) -> str:
         import random
         return random.choice(self.filler_phrases)
-
-    def _handle_time(self):
-        from datetime import datetime
-        now = datetime.now()
-        return f"지금은 {now.hour}시 {now.minute}분입니다."
-
-    def _handle_date(self):
-        from datetime import datetime
-        now = datetime.now()
-        return f"오늘은 {now.month}월 {now.day}일입니다."
-
-    def _handle_thanks(self):
-        import random
-        responses = [
-            "천만에요. 더 도와드릴 일이 있을까요?",
-            "별말씀을요. 언제든 말씀하세요.",
-            "제가 도움이 되어서 기뻐요.",
-            "당연하죠. 또 궁금한 게 있으면 물어보세요.",
-        ]
-        return random.choice(responses)
-
-    def _handle_goodbye(self):
-        import random
-        responses = [
-            "안녕히 가세요.",
-            "다음에 또 만나요.",
-            "좋은 하루 보내세요.",
-            "언제든 다시 불러주세요.",
-        ]
-        return random.choice(responses)
-
-    def _handle_exit(self):
-        return "네 알겠습니다. 안녕히 계세요."
-
-    def check_command(self, text: str) -> Optional[str]:
-        text = text.strip()
-        for keyword, handler in self.commands.items():
-            if keyword in text:
-                try:
-                    # 종료 명령인 경우 API 호출하여 end=true 확인
-                    if self.is_exit_command(text) and self.conversation_manager and self.conversation_manager.ai_client:
-                        self.logger.info(f"Exit command detected: {keyword}, checking with API...")
-                        # API 호출하여 서버 응답 확인
-                        try:
-                            emotion = "neutral"
-                            resp = self.conversation_manager.ai_client.send_chat_request(text, emotion)
-                            if resp and resp.success:
-                                # API 응답이 있으면 서버 응답 사용
-                                if resp.ai_response:
-                                    self.logger.info(f"API response for exit command: {resp.ai_response}, end={getattr(resp, 'end', False)}")
-                                    # end=true면 종료 신호 반환 (특별한 값)
-                                    if getattr(resp, 'end', False):
-                                        return "__EXIT_CONFIRMED__"  # 종료 확인됨
-                                    else:
-                                        # end=false면 서버 응답 사용
-                                        return resp.ai_response
-                                else:
-                                    # 응답이 없으면 로컬 응답 사용
-                                    response = handler()
-                                    self.logger.info(f"Local command handled (no API response): {keyword} -> {response}")
-                                    return response
-                            else:
-                                # API 호출 실패 시 로컬 응답 사용
-                                self.logger.warning(f"API call failed for exit command, using local response")
-                                response = handler()
-                                self.logger.info(f"Local command handled: {keyword} -> {response}")
-                                return response
-                        except Exception as e:
-                            self.logger.error(f"Error calling API for exit command: {e}")
-                            # API 호출 실패 시 로컬 응답 사용
-                            response = handler()
-                            self.logger.info(f"Local command handled (API error): {keyword} -> {response}")
-                            return response
-                    else:
-                        # 일반 명령어는 기존대로 처리
-                        response = handler()
-                        self.logger.info(f"Local command handled: {keyword} -> {response}")
-                        return response
-                except Exception as e:
-                    self.logger.error(f"Local command error: {e}")
-                    return "죄송합니다. 처리 중 오류가 발생했습니다."
-        return None
-
-    def is_exit_command(self, text: str) -> bool:
-        exit_keywords = ["종료", "끝", "멈춰", "그만", "exit", "quit"]
-        return any(keyword in text for keyword in exit_keywords)
 
 
 

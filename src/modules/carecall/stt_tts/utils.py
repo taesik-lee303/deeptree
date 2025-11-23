@@ -482,9 +482,9 @@ class ConversationManager:
         self._last_ai_time = 0.0
 
         if self.tts:
-            # LocalCommandHandler는 tts.py 내에 정의
+            # LocalCommandHandler는 필러 문구만 제공 (로컬 명령어 처리 제거)
             from modules.carecall.stt_tts.tts import LocalCommandHandler
-            self.local_command_handler = LocalCommandHandler(self.tts, conversation_manager=self)
+            self.local_command_handler = LocalCommandHandler(self.tts)
 
         self.logger = get_logger(self.__class__.__name__)
         self.kafka = KafkaProducerClient(emotion_settings) if emotion_settings.enabled else None
@@ -563,35 +563,8 @@ class ConversationManager:
         self._filler_done = threading.Event()
         self._filler_thread = None
 
-        # 1) 로컬 명령어는 즉시 처리(필러 병렬과 무관)
-        local_response = None
-        if self.local_command_handler:
-            try:
-                local_response = self.local_command_handler.check_command(text)
-            except Exception as e:
-                self.logger.error(f"Local command error: {e}")
-
-        if local_response:
-            # 종료 확인 신호인 경우 (API에서 end=true 받음)
-            if local_response == "__EXIT_CONFIRMED__":
-                self.logger.info("Exit confirmed by API (end=true), stopping conversation...")
-                self._speak_response("네 알겠습니다. 안녕히 계세요.")
-                self.stop_conversation()
-                return
-            
-            # 로컬 응답은 곧바로 말하고 종료/복귀
-            self._speak_response(local_response)
-            # 종료 명령이지만 API에서 end=false인 경우는 계속 진행
-            if self.local_command_handler.is_exit_command(text) and local_response != "__EXIT_CONFIRMED__":
-                # API에서 end=false를 받았거나 API 호출 실패한 경우
-                # 사용자가 명시적으로 종료 명령을 했으므로 종료
-                self.logger.info("Exit command detected (API end=false or failed), stopping conversation...")
-                self.stop_conversation()
-                return
-            self.state = "LISTENING"
-            return
-
-        # 2) AI 요청 스레드 — 응답 도착 시 필러가 돌고 있으면 잠깐만 기다렸다가 응답 말하기
+        # 로컬 명령어 처리 제거: 모든 입력을 서버로 전송
+        # 1) AI 요청 스레드 — 응답 도착 시 필러가 돌고 있으면 잠깐만 기다렸다가 응답 말하기
         def process_ai_response():
             try:
                 emotion = getattr(self, "_detect_emotion_from_text", lambda _: "neutral")(text)
