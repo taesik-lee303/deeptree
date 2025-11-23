@@ -1897,16 +1897,36 @@ class ROIManager:
                     if landmark_rois:
                         detected_regions = list(landmark_rois.keys())
                         landmark_detection_status = f"✅ 성공 ({len(detected_regions)}개 ROI: {', '.join(detected_regions)})"
-                        logger.info(f"🎯 랜드마크 기반 ROI 추출 성공: {detected_regions}")
+                        # 성공 시 로깅 최소화 (주기적으로만)
+                        if not hasattr(self, '_last_landmark_success_log_ts'):
+                            self._last_landmark_success_log_ts = 0.0
+                        if time.time() - self._last_landmark_success_log_ts > 10.0:  # 10초마다만 로그
+                            logger.info(f"🎯 랜드마크 기반 ROI 추출 성공: {detected_regions}")
+                            self._last_landmark_success_log_ts = time.time()
                     else:
                         landmark_detection_status = "⚠️ 랜드마크 검출됐으나 ROI 변환 실패"
-                        logger.warning(f"⚠️ 랜드마크는 검출되었으나 ROI 변환 실패 (landmarks keys: {list(landmarks.keys()) if landmarks else 'None'})")
+                        # ROI 변환 실패 로깅 최소화 (주기적으로만)
+                        if not hasattr(self, '_last_landmark_roi_fail_log_ts'):
+                            self._last_landmark_roi_fail_log_ts = 0.0
+                        if time.time() - self._last_landmark_roi_fail_log_ts > 10.0:  # 10초마다만 로그
+                            logger.warning(f"⚠️ 랜드마크는 검출되었으나 ROI 변환 실패 (landmarks keys: {list(landmarks.keys()) if landmarks else 'None'})")
+                            self._last_landmark_roi_fail_log_ts = time.time()
                 else:
                     landmark_detection_status = "❌ 랜드마크 검출 실패 (얼굴 미검출 또는 신뢰도 부족)"
-                    logger.warning(f"❌ 랜드마크 검출 실패: MediaPipe가 얼굴을 찾지 못함")
+                    # 랜드마크 검출 실패 로깅 최소화 (주기적으로만)
+                    if not hasattr(self, '_last_landmark_fail_log_ts'):
+                        self._last_landmark_fail_log_ts = 0.0
+                    if time.time() - self._last_landmark_fail_log_ts > 10.0:  # 10초마다만 로그
+                        logger.warning(f"❌ 랜드마크 검출 실패: MediaPipe가 얼굴을 찾지 못함")
+                        self._last_landmark_fail_log_ts = time.time()
             except Exception as e:
                 landmark_detection_status = f"❌ 예외 발생: {str(e)[:50]}"
-                logger.warning(f"❌ 랜드마크 기반 ROI 추출 예외 발생, 고정 비율 방식 사용: {e}")
+                # 예외 로깅 최소화 (주기적으로만)
+                if not hasattr(self, '_last_landmark_exception_log_ts'):
+                    self._last_landmark_exception_log_ts = 0.0
+                if time.time() - self._last_landmark_exception_log_ts > 10.0:  # 10초마다만 로그
+                    logger.warning(f"❌ 랜드마크 기반 ROI 추출 예외 발생, 고정 비율 방식 사용: {e}")
+                    self._last_landmark_exception_log_ts = time.time()
         elif self.landmark_detector is None:
             landmark_detection_status = "비활성화 (detector=None)"
         elif not self.landmark_detector.enable:
@@ -1914,10 +1934,10 @@ class ROIManager:
         elif frame_u8 is None:
             landmark_detection_status = "비활성화 (frame_u8=None)"
         
-        # 랜드마크 상태 주기적 로깅
+        # 랜드마크 상태 주기적 로깅 (최소화: 30초마다만)
         if not hasattr(self, '_last_landmark_log_ts'):
             self._last_landmark_log_ts = 0.0
-        if time.time() - self._last_landmark_log_ts > 3.0:  # 3초마다 로그
+        if time.time() - self._last_landmark_log_ts > 30.0:  # 30초마다만 로그
             logger.info(f"🎯 랜드마크 검출 상태: {landmark_detection_status}")
             self._last_landmark_log_ts = time.time()
         
