@@ -461,38 +461,86 @@ class STTManager:
                 self.logger.error(f"Transcription worker error: {e}")
 
     def start(self, on_transcribed: Optional[Callable[[str], None]] = None):
-        """STT 시스템 시작"""
+        """STT 시스템 시작 - 완전한 재시작 보장"""
         if self.is_running:
+            self.logger.warning("STT Manager is already running, stopping before restart")
+            self.stop()
+            # 정리 대기 (더 긴 대기 시간)
+            time.sleep(0.5)
+            # 상태 재확인
+            if self.is_running or (hasattr(self, 'worker') and self.worker and self.worker.is_alive()):
+                self.logger.error("STT Manager did not stop properly, forcing cleanup")
+                self.is_running = False
+                if hasattr(self, 'worker'):
+                    self.worker = None
+                time.sleep(0.3)
+
+        # 시작 전 상태 확인
+        if self.is_running:
+            self.logger.error("STT Manager is still marked as running, cannot start")
             return
 
+        self.logger.info("Starting STT Manager...")
         self.is_running = True
         self.on_transcribed = on_transcribed
 
         # 워커 스레드 시작
-        self.worker = threading.Thread(target=self._transcription_worker, daemon=True)
-        self.worker.start()
+        try:
+            self.worker = threading.Thread(target=self._transcription_worker, daemon=True)
+            self.worker.start()
+            self.logger.info("STT worker thread started")
+        except Exception as e:
+            self.logger.error(f"Failed to start STT worker thread: {e}")
+            self.is_running = False
+            raise
 
         # 오디오 캡처 시작
-        self.audio_capture.start_capture()
+        try:
+            self.audio_capture.start_capture()
+            self.logger.info("Audio capture started")
+        except Exception as e:
+            self.logger.error(f"Failed to start audio capture: {e}")
+            self.is_running = False
+            if self.worker:
+                self.work_queue.put(None)
+            raise
 
-        self.logger.info("STT Manager started")
+        self.logger.info("STT Manager started successfully")
 
     def stop(self):
-        """STT 시스템 중지"""
+        """STT 시스템 중지 - 완전한 정리를 보장"""
         if not self.is_running:
+            self.logger.debug("STT Manager already stopped")
             return
 
+        self.logger.info("Stopping STT Manager...")
         self.is_running = False
 
         # 오디오 캡처 중지
-        self.audio_capture.stop_capture()
+        try:
+            self.audio_capture.stop_capture()
+            # 오디오 캡처가 완전히 정리될 때까지 대기
+            time.sleep(0.3)
+        except Exception as e:
+            self.logger.warning(f"Error stopping audio capture: {e}")
 
         # 워커 종료
-        self.work_queue.put(None)
-        if self.worker:
-            self.worker.join(timeout=5)
+        try:
+            self.work_queue.put(None)
+            if self.worker and self.worker.is_alive():
+                self.worker.join(timeout=5)
+                if self.worker.is_alive():
+                    self.logger.warning("STT worker thread did not terminate within timeout")
+        except Exception as e:
+            self.logger.warning(f"Error stopping worker: {e}")
 
-        self.logger.info("STT Manager stopped")
+        # 상태 확인 및 정리
+        if hasattr(self, 'worker'):
+            self.worker = None
+        if hasattr(self, 'on_transcribed'):
+            self.on_transcribed = None
+
+        self.logger.info("STT Manager stopped completely")
 
     def transcribe_file(self, file_path: str) -> str:
         """파일 직접 전사 (텍스트)"""

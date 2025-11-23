@@ -100,34 +100,151 @@ class DeepCareSystem:
             return False
     
     def run_interactive_mode(self):
-        """대화형 모드 실행"""
+        """대화형 모드 실행 - 무한 루프로 대화 종료 후 재활성화 대기"""
         self.logger.info("Starting interactive conversation mode...")
+        loop_count = 0
 
         try:
-            if not self.wait_for_activation():
-                self.logger.info("Activation wait aborted")
-                return
+            while not self.shutdown_event.is_set():
+                try:
+                    loop_count += 1
+                    self.logger.info(f"[MainLoop] Starting loop iteration #{loop_count}")
+                    
+                    # 활성화 대기
+                    self.logger.info("[MainLoop] Calling wait_for_activation()...")
+                    if not self.wait_for_activation():
+                        self.logger.warning("[MainLoop] Activation wait aborted, breaking loop")
+                        break
+                    self.logger.info("[MainLoop] Activation wait completed, starting conversation...")
 
-            self.is_running = True
-            self.conversation_manager.start_conversation()
+                    # 대화 시작 전 STT가 실행 중이면 정리
+                    if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
+                        self.logger.info("Stopping STT from activation phase before conversation start")
+                        try:
+                            self.stt_manager.stop()
+                            time.sleep(0.2)  # STT 정리 대기
+                        except Exception as e:
+                            self.logger.warning(f"Error stopping STT: {e}")
 
-            # 메인 루프
-            while self.is_running and not self.shutdown_event.is_set():
-                time.sleep(0.1)
+                    # 대화 시작
+                    self.is_running = True
+                    try:
+                        self.conversation_manager.start_conversation()
+                        
+                        # 대화 진행 중 대기
+                        while self.is_running and not self.shutdown_event.is_set():
+                            time.sleep(0.1)
+                    finally:
+                        # 대화 종료
+                        try:
+                            self.conversation_manager.stop_conversation()
+                        except Exception as e:
+                            self.logger.error(f"Error stopping conversation: {e}")
+                            import traceback
+                            self.logger.error(traceback.format_exc())
+                        
+                        self.is_running = False
+                        
+                        # STT가 실행 중이면 정리
+                        if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
+                            self.logger.info("Stopping STT after conversation end")
+                            try:
+                                self.stt_manager.stop()
+                                time.sleep(0.2)  # STT 정리 대기
+                            except Exception as e:
+                                self.logger.warning(f"Error stopping STT: {e}")
+                        
+                        self.logger.info("Conversation ended, waiting for next activation...")
+                        
+                        # 오디오 장치 상태 확인 및 진단
+                        try:
+                            self._diagnose_audio_device()
+                        except Exception as e:
+                            self.logger.warning(f"Error in audio device diagnosis: {e}")
+                        
+                        # 루프 계속 진행을 위한 명시적 로그
+                        self.logger.info("Loop continuing, will call wait_for_activation() again...")
+                
+                except KeyboardInterrupt:
+                    self.logger.info("Interactive mode interrupted by user")
+                    break
+                except Exception as e:
+                    # 루프 내부 예외 처리 - 루프를 계속 진행
+                    self.logger.error(f"[MainLoop] Error in loop iteration #{loop_count}: {e}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
+                    self.logger.info("[MainLoop] Continuing to next iteration despite error...")
+                    # 예외 발생 후 잠시 대기
+                    time.sleep(1.0)
 
         except KeyboardInterrupt:
             self.logger.info("Interactive mode interrupted by user")
         except Exception as e:
             self.logger.error(f"Interactive mode error: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
         finally:
-            self.conversation_manager.stop_conversation()
+            if self.conversation_manager:
+                self.conversation_manager.stop_conversation()
+            # 최종 STT 정리
+            if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
+                try:
+                    self.stt_manager.stop()
+                except Exception:
+                    pass
 
     def wait_for_activation(self) -> bool:
         """센서/호출어 기반으로 케어콜 시작 조건을 대기."""
+        self.logger.info("[Activation] ===== Starting activation wait (new cycle) =====")
+        
         # 활성화 조건이 비어 있다면 바로 통과
         if self.activation_cfg.noise_threshold <= 0 and not self._wake_phrases_norm:
             self.logger.info("Activation gating disabled; starting immediately")
             return True
+
+        # STT가 이미 실행 중이면 먼저 정리 (재시작을 위해)
+        if self.stt_manager:
+            is_running = getattr(self.stt_manager, 'is_running', False)
+            self.logger.info(f"[Activation] STT Manager state before cleanup: is_running={is_running}")
+            
+            if is_running:
+                self.logger.info("[Activation] STT is still running from previous session, stopping before activation wait")
+                try:
+                    self.stt_manager.stop()
+                    time.sleep(0.5)  # STT 정리 대기 (더 긴 대기)
+                    
+                    # 정리 후 상태 확인
+                    is_still_running = getattr(self.stt_manager, 'is_running', False)
+                    if is_still_running:
+                        self.logger.error("[Activation] STT Manager is still marked as running after stop()!")
+                    else:
+                        self.logger.info("[Activation] STT stopped successfully")
+                except Exception as e:
+                    self.logger.error(f"[Activation] Error stopping STT before activation wait: {e}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
+            
+            # 오디오 캡처가 완전히 정리되었는지 확인
+            if hasattr(self.stt_manager, 'audio_capture'):
+                audio_capture = self.stt_manager.audio_capture
+                is_capturing = getattr(audio_capture, 'is_capturing', False)
+                has_stream = hasattr(audio_capture, 'stream') and audio_capture.stream is not None
+                
+                if is_capturing or has_stream:
+                    self.logger.warning(f"[Activation] Audio capture not fully cleaned: is_capturing={is_capturing}, has_stream={has_stream}")
+                    # 강제 정리
+                    try:
+                        if has_stream:
+                            try:
+                                audio_capture.stream.stop()
+                                audio_capture.stream.close()
+                            except Exception:
+                                pass
+                            audio_capture.stream = None
+                        audio_capture.is_capturing = False
+                        self.logger.info("[Activation] Audio capture force-cleaned")
+                    except Exception as e:
+                        self.logger.warning(f"[Activation] Error force-cleaning audio capture: {e}")
 
         activation_queue: queue.Queue[ActivationEvent] = queue.Queue(maxsize=1)
 
@@ -145,27 +262,36 @@ class DeepCareSystem:
 
         if voice_enabled and self.stt_manager:
             def _on_transcribed(text: str) -> None:
+                self.logger.info(f"[Activation] STT transcribed: {text}")
                 normalized = self._normalize_text(text)
                 if not normalized:
+                    self.logger.debug(f"Text normalized to empty, ignoring")
                     return
+                self.logger.info(f"[Activation] Checking if '{normalized}' is a wake phrase...")
                 if self._is_wake_phrase(normalized):
                     now = time.time()
                     if self.activation_cfg.sensor_timeout_sec > 0 and (now - self._last_voice_trigger_ts) < self.activation_cfg.sensor_timeout_sec:
+                        self.logger.info(f"[Activation] Wake phrase detected but within timeout window ({self.activation_cfg.sensor_timeout_sec}s), ignoring")
                         return
                     self._last_voice_trigger_ts = now
                     self.logger.info("Wake phrase detected: %s", text)
                     _push_event(ActivationEvent(source="voice", payload={"text": text}))
+                else:
+                    self.logger.info(f"[Activation] '{normalized}' is not a wake phrase")
 
             try:
+                self.logger.info("Starting STT for wake phrase detection...")
                 self.stt_manager.start(on_transcribed=_on_transcribed)
                 stt_started = True
                 self.logger.info(
-                    "Waiting for wake phrases: %s",
+                    "STT started successfully. Waiting for wake phrases: %s",
                     ", ".join(sorted(self.activation_cfg.wake_phrases or [])) or "(none)"
                 )
             except Exception as exc:
                 voice_enabled = False
                 self.logger.error("Failed to start STT for wake phrase detection: %s", exc)
+                import traceback
+                self.logger.error(traceback.format_exc())
 
         if not watcher_active:
             self.logger.warning("Sensor trigger watcher inactive; relying on voice wake-up only")
@@ -192,8 +318,13 @@ class DeepCareSystem:
         finally:
             if watcher_active:
                 watcher.stop()
-            if stt_started:
-                self.stt_manager.stop()
+            if stt_started and self.stt_manager:
+                try:
+                    self.logger.info("Stopping STT from activation wait phase")
+                    self.stt_manager.stop()
+                    time.sleep(0.2)  # STT 정리 대기
+                except Exception as e:
+                    self.logger.warning(f"Error stopping STT in activation wait: {e}")
 
         if triggered is None:
             return False
@@ -201,6 +332,44 @@ class DeepCareSystem:
         self._last_activation_event = triggered
         self.logger.info("Activation satisfied by %s", triggered.source)
         return True
+
+    def _diagnose_audio_device(self):
+        """오디오 장치 상태 진단"""
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            self.logger.info(f"[Diagnosis] Available audio devices: {len(devices)}")
+            
+            # 설정된 오디오 장치 확인
+            if self.stt_manager and hasattr(self.stt_manager, 'audio_capture'):
+                audio_cfg = getattr(self.stt_manager.audio_capture, 'config', None)
+                if audio_cfg:
+                    input_device = getattr(audio_cfg, 'input_device', None)
+                    self.logger.info(f"[Diagnosis] Configured input device: {input_device}")
+            
+            # 오디오 장치 사용 가능 여부 확인
+            try:
+                default_input = sd.query_devices(kind='input')
+                self.logger.info(f"[Diagnosis] Default input device: {default_input['name']}")
+            except Exception as e:
+                self.logger.warning(f"[Diagnosis] Cannot query default input device: {e}")
+            
+            # STT Manager 상태 확인
+            if self.stt_manager:
+                is_running = getattr(self.stt_manager, 'is_running', False)
+                has_worker = hasattr(self.stt_manager, 'worker') and self.stt_manager.worker is not None
+                worker_alive = has_worker and self.stt_manager.worker.is_alive() if has_worker else False
+                self.logger.info(f"[Diagnosis] STT Manager state: is_running={is_running}, has_worker={has_worker}, worker_alive={worker_alive}")
+                
+                # 오디오 캡처 상태 확인
+                if hasattr(self.stt_manager, 'audio_capture'):
+                    is_capturing = getattr(self.stt_manager.audio_capture, 'is_capturing', False)
+                    has_stream = hasattr(self.stt_manager.audio_capture, 'stream') and self.stt_manager.audio_capture.stream is not None
+                    self.logger.info(f"[Diagnosis] Audio capture state: is_capturing={is_capturing}, has_stream={has_stream}")
+        except Exception as e:
+            self.logger.warning(f"[Diagnosis] Error diagnosing audio device: {e}")
+            import traceback
+            self.logger.warning(traceback.format_exc())
 
     def _normalize_text(self, text: str) -> str:
         s = unicodedata.normalize("NFKC", (text or "")).lower()
@@ -300,10 +469,17 @@ class DeepCareSystem:
             self.stt_manager.stop()
         
         if self.tts_manager:
-            self.tts_manager.close()
+            try:
+                self.tts_manager.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing TTS manager: {e}")
         
         if self.ai_client:
-            self.ai_client.close()
+            try:
+                if hasattr(self.ai_client, 'close'):
+                    self.ai_client.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing AI client: {e}")
         
         self.logger.info("System shutdown complete")
 

@@ -36,8 +36,32 @@ def find_monitor_offset(prefer_size=(240,240), fallback=(3840,0)):
         pass
     return fallback
 
-pos = find_monitor_offset()
-os.environ["SDL_VIDEO_WINDOW_POS"] = f"{pos[0]},{pos[1]}"
+# ---------- 디스플레이 크기 설정 ----------
+BASE_DISPLAY_SIZE = 240  # 디자인 기준
+DEFAULT_DISPLAY_SIZE = 480  # 2.1인치 원형 디스플레이 기본값
+
+def _env_int(name: str, default: int) -> int:
+    val = os.getenv(name)
+    if val is None or not str(val).strip():
+        return default
+    try:
+        return int(val)
+    except Exception:
+        return default
+
+DISPLAY_SIZE = max(180, _env_int("DISPLAY_SENSOR_SIZE", DEFAULT_DISPLAY_SIZE))
+SCALE = max(0.5, DISPLAY_SIZE / BASE_DISPLAY_SIZE)
+
+def scale(value: float, minimum: int = 1) -> int:
+    return max(minimum, int(round(value * SCALE)))
+
+offset_x = _env_int("DISPLAY_SENSOR_OFFSET_X", 0)
+offset_y = _env_int("DISPLAY_SENSOR_OFFSET_Y", -scale(20, 8))
+
+pos = find_monitor_offset(prefer_size=(DISPLAY_SIZE, DISPLAY_SIZE))
+adj_x = pos[0] + offset_x
+adj_y = max(0, pos[1] + offset_y)
+os.environ["SDL_VIDEO_WINDOW_POS"] = f"{adj_x},{adj_y}"
 # Wayland에서 위치 무시되면 필요 시: os.environ["SDL_VIDEODRIVER"] = "x11"
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -56,11 +80,10 @@ import pygame
 pygame.init()
 
 # ---------- 설정 ----------
-# 2.1인치 원형 디스플레이 (240x240 해상도)
-SIZE = 240
-CENTER = SIZE//2
-RADIUS = CENTER-11  # 비율 유지 (480->240이므로 절반)
-WATER_RADIUS = CENTER-20  # 비율 유지
+SIZE = DISPLAY_SIZE
+CENTER = SIZE // 2
+RADIUS = CENTER - scale(11, 1)
+WATER_RADIUS = CENTER - scale(20, 1)
 FPS = 60
 
 # 파도
@@ -70,28 +93,29 @@ WAVE_FAST_A = 15.0
 WAVE_FAST_SPEED = 0.25
 WAVE_KS = (0.018, 0.028, 0.042)
 
-# 카드 - 2.1인치 디스플레이에 맞게 크기 조정 (겹침 방지)
+# 카드 - 디스플레이 크기에 따라 자동 조정
 CARD_SIZES = {
-    "primary": (65, 32),    # 주요 센서 (온도, 습도) - 240x240에 맞게 축소
-    "secondary": (55, 28),   # 보조 센서 (소음, PM) - 240x240에 맞게 축소
-    "tertiary": (45, 22)      # 기타 센서 - 240x240에 맞게 축소
+    "primary": (scale(65, 20), scale(32, 12)),
+    "secondary": (scale(55, 18), scale(28, 10)),
+    "tertiary": (scale(45, 16), scale(22, 8)),
 }
-CARD_RADIUS = 8  # 비율 유지
-CARD_ALPHA = 230  # 더 선명하게
-CARD_SHADOW = (12, 36, 55, 100)  # 더 진한 그림자
-CARD_STROKE = (255, 255, 255, 120)  # 더 선명한 테두리
-CARD_HILITE = (255, 255, 255, 80)  # 더 밝은 하이라이트
-DOT_R = 4  # 비율 유지
+CARD_RADIUS = max(4, scale(8, 4))
+CARD_ALPHA = 230
+CARD_SHADOW = (12, 36, 55, 100)
+CARD_STROKE = (255, 255, 255, 120)
+CARD_HILITE = (255, 255, 255, 80)
+DOT_R = max(2, scale(4, 2))
 
-# 상단 텍스트 위치 (2.1인치에 맞게 조정)
-TOP_TIME_Y = 38
-TOP_DATE_Y = 52
+# 상단 텍스트 위치
+TOP_TIME_Y = scale(38, 20)
+TOP_DATE_Y = scale(52, 28)
 
 # 개선된 색상 팔레트
 COL_BG_RING = (200, 210, 220)
 COL_WATER = (240, 248, 255, 220)
 COL_TEXT = (20, 30, 40)
 COL_WAIT = (120, 180, 220)
+COL_DEMO = (255, 120, 120)
 
 # 센서 우선순위 및 색상
 SENSOR_PRIORITY = {
@@ -115,6 +139,7 @@ COLOR_SYSTEM = {
 
 screen = pygame.display.set_mode((SIZE, SIZE))
 pygame.display.set_caption("Smart Circular Display")
+print(f"[SensorDisplay] Display size: {SIZE}x{SIZE} (scale={SCALE:.2f})")
 clock = pygame.time.Clock()
 
 # ---------- 폰트: 한글 자동 탐색 ----------
@@ -142,11 +167,11 @@ def make_font(size, bold=False):
     return pygame.font.SysFont("Arial", size, bold=bold)
 
 # 2.1인치 디스플레이에 맞게 폰트 크기 조정
-font_time  = make_font(18, True)   # 36 -> 18
-font_date  = make_font(9, True)    # 18 -> 9
-font_label = make_font(7, True)    # 14 -> 7
-font_value = make_font(10, True)   # 20 -> 10
-font_wait  = make_font(9, False)   # 18 -> 9
+font_time  = make_font(max(12, scale(18, 12)), True)
+font_date  = make_font(max(8, scale(9, 6)), True)
+font_label = make_font(max(6, scale(7, 5)), True)
+font_value = make_font(max(8, scale(10, 6)), True)
+font_wait  = make_font(max(8, scale(9, 6)), False)
 
 # 라벨 (항상 한글로 표시)
 LABELS_KR = {"temp":"온도","noise":"소음","humi":"습도","pm25":"PM2.5","pm10":"PM10"}
@@ -200,7 +225,11 @@ sensor_data = {
     "noise_level": None,
     "motion_detected": False,
 }
+fallback_data = dict(sensor_data)
 data_lock = threading.Lock()
+last_sensor_update = 0.0
+FALLBACK_TIMEOUT = float(os.getenv("DISPLAY_SENSOR_FALLBACK_TIMEOUT", "10"))
+FORCE_DEMO_MODE = os.getenv("DISPLAY_DEMO_MODE", "0") == "1"
 
 DEFAULT_KAFKA_TOPICS = ["sensors.uart", "display-data", "sensor-events"]
 DEFAULT_BOOTSTRAP_SERVERS = ["localhost:9092"]
@@ -361,6 +390,7 @@ def extract_sensor_values(payload: Dict[str, Any]) -> Dict[str, Any]:
     return updates
 
 def kafka_consume():
+    global last_sensor_update
     if not KAFKA_ENABLED:
         reason = f" ({_KAFKA_IMPORT_ERROR})" if "_KAFKA_IMPORT_ERROR" in globals() and _KAFKA_IMPORT_ERROR else ""
         print("[i] Kafka 라이브러리를 사용할 수 없습니다." + reason)
@@ -489,6 +519,8 @@ def kafka_consume():
                         print(f"[SensorDisplay] Sensor data updated ({message_count}): {updates}")
                     with data_lock:
                         sensor_data.update(updates)
+                        global last_sensor_update
+                        last_sensor_update = time.time()
     finally:
         try:
             consumer.close()
@@ -497,19 +529,16 @@ def kafka_consume():
 
 
 def demo_feeder():
-    t0=time.time()
-    force_demo = os.getenv("DISPLAY_DEMO_MODE", "0") == "1"
+    t0 = time.time()
     while True:
-        if not force_demo and KAFKA_ENABLED and resolve_kafka_topics():
-            return
-        t=time.time()-t0
+        t = time.time() - t0
         with data_lock:
-            sensor_data["temperature"]=23.5+2.0*math.sin(t*0.12)
-            sensor_data["humidity"]=48+22*(math.sin(t*0.07)*0.5+0.5)
-            sensor_data["pm2_5"]=int(10+20*(math.sin(t*0.05)*0.5+0.5))
-            sensor_data["pm10"] =int(20+40*(math.sin(t*0.045+1.2)*0.5+0.5))
-            sensor_data["noise_level"]=int(35+25*(math.sin(t*0.35)*0.5+0.5))
-            sensor_data["motion_detected"]=(int(t)%12==0)
+            fallback_data["temperature"] = 23.5 + 2.0 * math.sin(t * 0.12)
+            fallback_data["humidity"] = 48 + 22 * (math.sin(t * 0.07) * 0.5 + 0.5)
+            fallback_data["pm2_5"] = int(10 + 20 * (math.sin(t * 0.05) * 0.5 + 0.5))
+            fallback_data["pm10"] = int(20 + 40 * (math.sin(t * 0.045 + 1.2) * 0.5 + 0.5))
+            fallback_data["noise_level"] = int(35 + 25 * (math.sin(t * 0.35) * 0.5 + 0.5))
+            fallback_data["motion_detected"] = (int(t) % 12 == 0)
         time.sleep(0.2)
 
 threading.Thread(target=kafka_consume, daemon=True).start()
@@ -606,7 +635,7 @@ def draw_water(surface, wave, data):
     surf_y = wave["surf_y"]
     min_x = CENTER - radius
     max_x = CENTER + radius
-    steps = 150  # 2.1인치에 맞게 조정 (300 -> 150)
+    steps = max(120, int(150 * SCALE))
     
     # 물 표면 포인트 계산
     pts = []
@@ -722,10 +751,12 @@ def draw_time_and_date(surface):
     """개선된 시간/날짜 표시 (2.1인치 디스플레이용)"""
     now = datetime.now()
     
-    # 시간 배경 (반투명) - 2.1인치에 맞게 크기 조정
-    time_bg = pygame.Surface((100, 25), pygame.SRCALPHA)
-    pygame.draw.rect(time_bg, (255, 255, 255, 120), (0, 0, 100, 25), border_radius=12)
-    surface.blit(time_bg, (CENTER - 50, TOP_TIME_Y - 12))
+    # 시간 배경 (반투명)
+    time_bg_w = scale(100, 40)
+    time_bg_h = scale(25, 12)
+    time_bg = pygame.Surface((time_bg_w, time_bg_h), pygame.SRCALPHA)
+    pygame.draw.rect(time_bg, (255, 255, 255, 120), (0, 0, time_bg_w, time_bg_h), border_radius=scale(12, 6))
+    surface.blit(time_bg, (CENTER - time_bg_w // 2, TOP_TIME_Y - time_bg_h // 2))
     
     # 시간 텍스트 (그림자 효과)
     time_text = now.strftime("%H:%M")
@@ -733,7 +764,7 @@ def draw_time_and_date(surface):
     time_shadow = font_time.render(time_text, True, (0, 0, 0, 120))
     
     # 그림자 그리기
-    blit_center(surface, time_shadow, CENTER + 1, TOP_TIME_Y + 1)
+    blit_center(surface, time_shadow, CENTER + scale(1, 1), TOP_TIME_Y + scale(1, 1))
     blit_center(surface, time_surf, CENTER, TOP_TIME_Y)
     
     # 날짜 텍스트 (간소화)
@@ -741,29 +772,40 @@ def draw_time_and_date(surface):
     date_surf = font_date.render(date_text, True, COL_TEXT)
     blit_center(surface, date_surf, CENTER, TOP_DATE_Y)
 
-def check_card_collision(rect1, rect2, margin=8):
+def check_card_collision(rect1, rect2, margin=None):
     """두 카드 간 충돌 감지 - 마진 증가로 겹침 방지 (2.1인치에 맞게)"""
+    if margin is None:
+        margin = scale(8, 4)
     return (abs(rect1.centerx - rect2.centerx) < (rect1.width + rect2.width) // 2 + margin and
             abs(rect1.centery - rect2.centery) < (rect1.height + rect2.height) // 2 + margin)
 
-def optimize_card_positions(items, base_radius=40):
+def optimize_card_positions(items, base_radius=None):
     """카드 위치 최적화 - 겹침 방지 (2.1인치 디스플레이용)"""
     num_items = len(items)
     if num_items == 0:
         return []
     
-    # 카드 개수에 따른 동적 반지름 조정 (2.1인치에 맞게)
-    if num_items >= 4:
-        # 카드가 많을수록 더 큰 원에 배치
-        base_radius = min(50, 30 + num_items * 4)
+    if base_radius is None:
+        base_radius = scale(40, 16)
     
-    # 기본 위치 계산 (2.1인치에 맞게 크기 조정)
+    # 카드 개수에 따른 동적 반지름 조정
+    if num_items >= 4:
+        base_radius = min(scale(80, 30), scale(30 + num_items * 8, 20))
+    
+    # 기본 위치 계산
     if num_items == 1:
-        positions = [(CENTER, CENTER - 30)]
+        positions = [(CENTER, CENTER - scale(30, 15))]
     elif num_items == 2:
-        positions = [(CENTER - 40, CENTER - 20), (CENTER + 40, CENTER - 20)]
+        positions = [
+            (CENTER - scale(40, 20), CENTER - scale(20, 10)),
+            (CENTER + scale(40, 20), CENTER - scale(20, 10)),
+        ]
     elif num_items == 3:
-        positions = [(CENTER - 45, CENTER - 10), (CENTER, CENTER - 30), (CENTER + 45, CENTER - 10)]
+        positions = [
+            (CENTER - scale(45, 20), CENTER - scale(10, 5)),
+            (CENTER, CENTER - scale(30, 15)),
+            (CENTER + scale(45, 20), CENTER - scale(10, 5)),
+        ]
     else:
         # 4개 이상일 때 원형 배치
         angle_step = 2 * math.pi / num_items
@@ -805,7 +847,7 @@ def optimize_card_positions(items, base_radius=40):
                         distance = 1
                     
                     # 분리 거리 계산 - 더 큰 여유 공간 (2.1인치에 맞게)
-                    min_distance = (card_rects[i].width + card_rects[j].width) // 2 + 15
+                    min_distance = (card_rects[i].width + card_rects[j].width) // 2 + scale(15, 6)
                     move_distance = (min_distance - distance) / 2
                     
                     # 위치 조정
@@ -819,7 +861,7 @@ def optimize_card_positions(items, base_radius=40):
                     new_y2 = card_rects[j].centery - move_y
                     
                     # 경계 내로 제한 - 더 엄격한 경계 체크 (2.1인치에 맞게)
-                    max_distance = WATER_RADIUS - max(card_rects[i].height, card_rects[j].height) // 2 - 10
+                    max_distance = WATER_RADIUS - max(card_rects[i].height, card_rects[j].height) // 2 - scale(10, 4)
                     for new_x, new_y, rect in [(new_x1, new_y1, card_rects[i]), (new_x2, new_y2, card_rects[j])]:
                         distance_from_center = math.sqrt((new_x - CENTER)**2 + (new_y - CENTER)**2)
                         if distance_from_center > max_distance:
@@ -856,7 +898,7 @@ def draw_sensor_cards(surface, data, wave, wave_offset_local):
         items.append(("pm10", f"{p10}", color_pm10(p10), "tertiary"))
 
     if not items:
-        blit_center(surface, font_wait.render("센서 데이터 대기중…", True, COL_WAIT), CENTER, CENTER+50)
+        blit_center(surface, font_wait.render("센서 데이터 대기중…", True, COL_WAIT), CENTER, CENTER + scale(50, 20))
         return
 
     # 최적화된 위치 계산
@@ -867,7 +909,7 @@ def draw_sensor_cards(surface, data, wave, wave_offset_local):
         phase = buoy_phases.setdefault(key, random.random() * math.tau)
         wave_y = wave["surf_y"](x) if abs(x - CENTER) < wave["radius"] else y
         bob = math.sin(wave_offset_local * 1.2 + phase) * (wave["amplitude"] * 0.15 + 1.0)
-        final_y = wave_y - 15 + bob  # 30 -> 15 (2.1인치에 맞게)
+        final_y = wave_y - scale(15, 6) + bob
         
         # 카드 크기 결정
         card_w, card_h = CARD_SIZES[card_type]
@@ -876,7 +918,7 @@ def draw_sensor_cards(surface, data, wave, wave_offset_local):
         
         # 경계 보정 - 더 엄격한 경계 체크 (2.1인치에 맞게)
         distance_from_center = math.sqrt((x - CENTER)**2 + (final_y - CENTER)**2)
-        max_distance = WATER_RADIUS - card_h//2 - 8  # 여유 공간 (2.1인치에 맞게)
+        max_distance = WATER_RADIUS - card_h//2 - scale(8, 4)
         if distance_from_center > max_distance:
             # 카드가 원 밖으로 나가지 않도록 조정
             angle = math.atan2(final_y - CENTER, x - CENTER)
@@ -892,11 +934,11 @@ def draw_sensor_cards(surface, data, wave, wave_offset_local):
 
         # 상태 표시 점 (2.1인치에 맞게 조정)
         status_dot_r = DOT_R + (1 if card_type == "primary" else 0)
-        pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 8), status_dot_r)
+        pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - scale(8, 4)), status_dot_r)
         
         # 상태 표시 링 (위험 상태일 때)
         if vcolor == COLOR_SYSTEM["hazardous"]:
-            pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - 8), 
+            pygame.draw.circle(surface, vcolor, (rect.centerx, rect.centery - scale(8, 4)), 
                              status_dot_r + 2, width=1)
 
         # 라벨/값 텍스트
@@ -905,8 +947,8 @@ def draw_sensor_cards(surface, data, wave, wave_offset_local):
         value_surf = font_value.render(value, True, vcolor)
         
         # 텍스트 중앙 정렬 (2.1인치에 맞게 조정)
-        blit_center(surface, label_surf, rect.centerx, rect.centery - 4)
-        blit_center(surface, value_surf, rect.centerx, rect.centery + 6)
+        blit_center(surface, label_surf, rect.centerx, rect.centery - scale(4, 2))
+        blit_center(surface, value_surf, rect.centerx, rect.centery + scale(6, 3))
 
 # ---------- 메인 루프 ----------
 wave_offset = 0.0
@@ -918,7 +960,15 @@ while running:
             running=False
 
     with data_lock:
-        data = dict(sensor_data)
+        live_data = dict(sensor_data)
+        demo_snapshot = dict(fallback_data)
+
+    now = time.time()
+    using_fallback = FORCE_DEMO_MODE or (now - last_sensor_update > FALLBACK_TIMEOUT)
+    if using_fallback:
+        data = demo_snapshot
+    else:
+        data = live_data
 
     # 모션 부스트
     if data.get("motion_detected"):
@@ -933,6 +983,10 @@ while running:
     draw_water(screen, wave, data)   # ← 데이터 기반 (기본 수위 포함)
     draw_time_and_date(screen)
     draw_sensor_cards(screen, data, wave, wave_offset)
+
+    if using_fallback:
+        demo_text = font_wait.render("DEMO MODE", True, COL_DEMO)
+        screen.blit(demo_text, (scale(10, 4), SIZE - scale(20, 8)))
 
     pygame.display.flip()
 

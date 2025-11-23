@@ -222,6 +222,7 @@ if REQUESTS_AVAILABLE:
     class SessionRequest:
         event_id: int = 1
         user_id: int = 1
+        device_type: str = "caretree"
 
     @dataclass
     class ChatRequest:
@@ -327,7 +328,7 @@ if REQUESTS_AVAILABLE:
                     created_at=datetime.now().isoformat()
                 )
 
-            request = SessionRequest(event_id=self.config.event_id, user_id=self.config.user_id)
+            request = SessionRequest(event_id=self.config.event_id, user_id=self.config.user_id, device_type="caretree")
 
             for attempt in range(self.config.max_retries):
                 try:
@@ -493,6 +494,15 @@ class ConversationManager:
         if not self.stt or not self.tts:
             raise ValueError("STT and TTS managers required")
 
+        # STT가 이미 실행 중이면 정리 후 재시작
+        if getattr(self.stt, 'is_running', False):
+            self.logger.info("STT is already running, stopping before conversation start")
+            try:
+                self.stt.stop()
+                time.sleep(0.2)  # STT 정리 대기
+            except Exception as e:
+                self.logger.warning(f"Error stopping STT before conversation start: {e}")
+
         # AI 클라이언트 세션 생성
         if self.ai_client:
             session_response = self.ai_client.create_session()
@@ -606,13 +616,20 @@ class ConversationManager:
         # 4) 감정 이벤트 카프카 전송
     def _emit_emotion(self, emotion: str, **extra):
         """감정 라벨과 추가 메타데이터를 카프카로 전송."""
+        payload = {"emotion": emotion}
+        payload.update({k: v for k, v in extra.items() if v is not None})
+        
         try:
             if getattr(self, "kafka", None):
-                payload = {"emotion": emotion}
-                payload.update({k: v for k, v in extra.items() if v is not None})
+                self.logger.info(f"[Emotion] Sending emotion event to Kafka: {payload}")
                 self.kafka.send(payload)
+                self.logger.info(f"[Emotion] Emotion event sent successfully")
+            else:
+                self.logger.warning(f"[Emotion] Kafka client not available, cannot send emotion event: {payload}")
         except Exception as e:
-            self.logger.error(f"Kafka emotion emit error: {e}")
+            self.logger.error(f"[Emotion] Kafka emotion emit error: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
    
 
 
@@ -759,7 +776,7 @@ class ConversationManager:
             pass
 
     def stop_conversation(self):
-        """대화 종료"""
+        """대화 종료 - 재시작을 위해 리소스는 유지"""
         self.state = "IDLE"
 
         if self.stt:
@@ -768,15 +785,21 @@ class ConversationManager:
             except Exception:
                 pass
 
+        # TTS와 AI 클라이언트는 재사용을 위해 닫지 않음
+        # (close()가 실제로 리소스를 해제하지 않으므로 문제없음)
         if self.tts:
             try:
+                # TTS close()는 아무것도 하지 않으므로 호출해도 무방
                 self.tts.close()
             except Exception:
                 pass
 
+        # AI 클라이언트는 세션을 유지하여 재시작 시 재사용
+        # close() 메서드가 없을 수 있으므로 hasattr로 확인
         if self.ai_client:
             try:
-                self.ai_client.close()
+                if hasattr(self.ai_client, 'close'):
+                    self.ai_client.close()
             except Exception:
                 pass
 

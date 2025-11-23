@@ -1,7 +1,8 @@
 # Thermal rPPG pipeline (MLX90640/90641) + MFSR + PresenceGate + UI + MQTT
+# OPTIMIZED VERSION - 최고 성능을 위한 최적화 버전
 # Run (from project root above src/):
 #   cd src
-#   python -m modules.rppg.thermal_rppg
+#   python -m modules.rppg.thermal_rppg_optimized
 
 import time, logging, warnings
 import os
@@ -122,11 +123,11 @@ class ThermalrPPGConfig:
     hr_ema_alpha: float = 0.2          # 저역 평활(0..1)
     sensor_rotation_deg: float = 0.0   # +값=반시계(CCW). 예) 135.0
     
-    # AI Enhancement parameters (성능 최적화를 위해 비활성화)
-    enable_ensemble_learning: bool = False
-    enable_wavelet_denoising: bool = False
-    enable_adaptive_filtering: bool = False
-    enable_personalized_model: bool = False
+    # AI Enhancement parameters
+    enable_ensemble_learning: bool = True
+    enable_wavelet_denoising: bool = True
+    enable_adaptive_filtering: bool = True
+    enable_personalized_model: bool = True
     model_update_interval: float = 300.0  # 5분마다 모델 업데이트
     
     # Raspberry Pi optimization parameters
@@ -135,8 +136,12 @@ class ThermalrPPGConfig:
     pi_cpu_throttle: bool = True   # CPU 부하 제한
     pi_reduced_precision: bool = True  # 정밀도 감소로 성능 향상
     
-    # Fast measurement parameters (성능 최적화를 위해 비활성화)
+    # Fast measurement parameters
     enable_fast_mode: bool = False
+    fast_min_duration: int = 6      # 빠른 모드 최소 측정 시간 (초)
+    fast_hr_period: float = 0.5     # 빠른 모드 HR 계산 주기
+    fast_present_frames: int = 3    # 빠른 모드 얼굴 인식 프레임
+    fast_sampling_rate: float = 20.0 # 빠른 모드 샘플링 레이트
 
     # Session management parameters
     session_min_duration: float = 45.0   # 한 세션 최소 측정 시간 (초)
@@ -149,8 +154,8 @@ class ThermalrPPGConfig:
     
     # Real-time MQTT publishing (세션 완료 전에도 주기적으로 전송)
     enable_realtime_mqtt: bool = True     # 실시간 MQTT 전송 활성화 (status 토픽으로 전송)
-    realtime_mqtt_interval: float = 1.0  # 실시간 전송 주기 (초) - 1초마다 전송
-    realtime_mqtt_quality_min: float = 0.1  # 실시간 전송 최소 품질 (낮춤)
+    realtime_mqtt_interval: float = 5.0  # 실시간 전송 주기 (초)
+    realtime_mqtt_quality_min: float = 0.3  # 실시간 전송 최소 품질
     
     # Face detection enhancement parameters
     enable_face_preprocessing: bool = True  # 전처리 파이프라인 활성화
@@ -1271,23 +1276,21 @@ class ThermalFaceDetector:
         H, W = frame.shape
         cx_img, cy_img = W*0.5, H*self.top_bias
         
-        # 전처리 파이프라인 적용 (문서 기반 개선)
+        # 전처리 파이프라인 적용 (최적화: 캐싱)
         # 이전 bbox가 있으면 얼굴 영역 기반 동적 정규화 사용
         face_bbox_for_preprocess = self.last_bbox if self.last_bbox is not None else None
-        frame_u8, frame_thermal = self._preprocess_frame(frame, face_bbox=face_bbox_for_preprocess)
+        
+        # 전처리 결과 캐싱 (bbox가 변하지 않으면 재사용)
+        cache_key = (id(frame), face_bbox_for_preprocess)
+        if not hasattr(self, '_preprocess_cache') or cache_key != getattr(self, '_preprocess_cache_key', None):
+            frame_u8, frame_thermal = self._preprocess_frame(frame, face_bbox=face_bbox_for_preprocess)
+            self._preprocess_cache = (frame_u8, frame_thermal)
+            self._preprocess_cache_key = cache_key
+        else:
+            frame_u8, frame_thermal = self._preprocess_cache
 
-        # 디버깅 정보 수집
-        debug_info = {
-            'frame_stats': {
-                'min': float(np.min(frame)),
-                'max': float(np.max(frame)),
-                'mean': float(np.mean(frame)),
-                'std': float(np.std(frame))
-            },
-            'detection_method': 'none',
-            'components_found': 0,
-            'threshold_stats': {}
-        }
+        # 디버깅 정보 수집 (최적화: 최소화)
+        debug_info = {'detection_method': 'none'}
 
         # KCF 추적기 우선 시도 (활성화된 경우)
         if self.enable_kcf and self.kcf_tracker is not None:
@@ -1334,16 +1337,7 @@ class ThermalFaceDetector:
                             self.last_template = cv2.resize(roi_u8, (max(8, w), max(8, h)))
                         debug_info['detection_method'] = 'tracking_components'
                         return self.last_bbox
-            # 템플릿 매칭 시도 (KCF가 비활성화된 경우)
-            if not self.enable_kcf:
-                track = self._template_track(frame_u8, (sx, sy, sw, sh))
-                if track is not None:
-                    # 온도 기반 검증
-                    if self._validate_face_temperature(frame_thermal, track):
-                        self.last_bbox = track
-                        self.missed = 0
-                        debug_info['detection_method'] = 'tracking_template'
-                        return self.last_bbox
+            # 템플릿 매칭 제거 (성능 최적화: 느린 템플릿 매칭 대신 컴포넌트 스코어링만 사용)
             self.missed += 1
 
         # 전체 프레임 검색
@@ -1412,10 +1406,13 @@ class ThermalFaceDetector:
         if roi_u8.size >= 9:
             self.last_template = cv2.resize(roi_u8, (max(8, w), max(8, h)))
         
-        # 성공 시 디버깅 로그
-        if self.missed == 0:  # 첫 성공이거나 연속 성공
+        # 성공 시 로깅 최소화 (최적화: 주기적으로만 로그)
+        if not hasattr(self, '_last_success_log_ts'):
+            self._last_success_log_ts = 0.0
+        if self.missed == 0 and time.time() - self._last_success_log_ts > 10.0:  # 10초마다만 로그
             mean_temp = float(np.mean(frame_thermal[y:y+h, x:x+w]))
-            logger.info(f"얼굴 인식 성공: {debug_info} | 온도: {mean_temp:.1f}°C")
+            logger.info(f"얼굴 인식 성공: {debug_info.get('detection_method', 'unknown')} | 온도: {mean_temp:.1f}°C")
+            self._last_success_log_ts = time.time()
             
         return self.last_bbox
 
@@ -1871,13 +1868,7 @@ class ROIManager:
             frame_u8: 전처리된 uint8 프레임 (랜드마크 검출용, 선택적)
             patch: 패치 크기
         """
-        # ROI 추출 시작 시 로깅 플래그 리셋
-        if not hasattr(self, '_extract_call_count'):
-            self._extract_call_count = 0
-        self._extract_call_count += 1
-        if self._extract_call_count % 50 == 0:  # 50번 호출마다 리셋
-            self._landmark_usage_logged = False
-            self._fixed_ratio_usage_logged = False
+        # 로깅 최소화 (최적화)
         
         if bbox is None:
             return {}, {}
@@ -1886,40 +1877,35 @@ class ROIManager:
         
         x, y, w, h = bbox
         
-        # 랜드마크 기반 ROI 추출 시도
+        # 랜드마크 기반 ROI 추출 시도 (최적화: 10프레임마다만 시도)
         landmark_rois = {}
-        landmark_detection_status = "비활성화"
-        if self.landmark_detector is not None and self.landmark_detector.enable and frame_u8 is not None:
+        if not hasattr(self, '_landmark_try_count'):
+            self._landmark_try_count = 0
+        self._landmark_try_count += 1
+        
+        # 10프레임마다만 랜드마크 검출 시도 (성능 최적화)
+        should_try_landmark = (self._landmark_try_count % 10 == 0) and \
+                             self.landmark_detector is not None and \
+                             self.landmark_detector.enable and \
+                             frame_u8 is not None
+        
+        if should_try_landmark:
             try:
                 landmarks = self.landmark_detector.detect(frame_u8, bbox)
                 if landmarks is not None:
                     landmark_rois = self.landmark_detector.get_roi_from_landmarks(landmarks, frame.shape)
                     if landmark_rois:
-                        detected_regions = list(landmark_rois.keys())
-                        landmark_detection_status = f"✅ 성공 ({len(detected_regions)}개 ROI: {', '.join(detected_regions)})"
-                        logger.info(f"🎯 랜드마크 기반 ROI 추출 성공: {detected_regions}")
+                        # 성공 시 마지막 랜드마크 저장 (다음 9프레임 동안 재사용)
+                        self._last_landmark_rois = landmark_rois
                     else:
-                        landmark_detection_status = "⚠️ 랜드마크 검출됐으나 ROI 변환 실패"
-                        logger.warning(f"⚠️ 랜드마크는 검출되었으나 ROI 변환 실패 (landmarks keys: {list(landmarks.keys()) if landmarks else 'None'})")
-                else:
-                    landmark_detection_status = "❌ 랜드마크 검출 실패 (얼굴 미검출 또는 신뢰도 부족)"
-                    logger.warning(f"❌ 랜드마크 검출 실패: MediaPipe가 얼굴을 찾지 못함")
-            except Exception as e:
-                landmark_detection_status = f"❌ 예외 발생: {str(e)[:50]}"
-                logger.warning(f"❌ 랜드마크 기반 ROI 추출 예외 발생, 고정 비율 방식 사용: {e}")
-        elif self.landmark_detector is None:
-            landmark_detection_status = "비활성화 (detector=None)"
-        elif not self.landmark_detector.enable:
-            landmark_detection_status = "비활성화 (enable=False)"
-        elif frame_u8 is None:
-            landmark_detection_status = "비활성화 (frame_u8=None)"
-        
-        # 랜드마크 상태 주기적 로깅
-        if not hasattr(self, '_last_landmark_log_ts'):
-            self._last_landmark_log_ts = 0.0
-        if time.time() - self._last_landmark_log_ts > 3.0:  # 3초마다 로그
-            logger.info(f"🎯 랜드마크 검출 상태: {landmark_detection_status}")
-            self._last_landmark_log_ts = time.time()
+                        # 실패 시 이전 랜드마크 사용 (연속성 유지)
+                        landmark_rois = getattr(self, '_last_landmark_rois', {})
+            except Exception:
+                # 실패 시 이전 랜드마크 사용
+                landmark_rois = getattr(self, '_last_landmark_rois', {})
+        else:
+            # 랜드마크 검출 주기가 아니면 이전 결과 재사용
+            landmark_rois = getattr(self, '_last_landmark_rois', {})
         
         # 얼굴 중심 찾기 (온도 분포 기반)
         face_center_x, face_center_y = self._find_face_center_from_temp(frame, bbox)
@@ -1936,16 +1922,12 @@ class ROIManager:
                            w >= self.subdivision_min_size * 2 and 
                            h >= self.subdivision_min_size * 2)
         
-        # 세분화 상태 로깅 (주기적으로)
+        # 세분화 상태 로깅 최소화 (최적화: 30초마다만)
         if not hasattr(self, '_last_subdivision_log_ts'):
             self._last_subdivision_log_ts = 0.0
-        if time.time() - self._last_subdivision_log_ts > 5.0:  # 5초마다 로그
+        if time.time() - self._last_subdivision_log_ts > 30.0:  # 30초마다만 로그
             if should_subdivide:
-                logger.info(f"✅ ROI 세분화 활성화: 얼굴 크기={face_area_ratio*100:.1f}% (임계값: {self.subdivision_threshold*100:.1f}%), "
-                           f"bbox={w}x{h}px (최소: {self.subdivision_min_size*2}px)")
-            else:
-                logger.debug(f"⚠️ ROI 세분화 비활성화: 얼굴 크기={face_area_ratio*100:.1f}% < {self.subdivision_threshold*100:.1f}% 또는 "
-                           f"bbox={w}x{h}px < {self.subdivision_min_size*2}px")
+                logger.info(f"✅ ROI 세분화 활성화: 얼굴 크기={face_area_ratio*100:.1f}%")
             self._last_subdivision_log_ts = time.time()
         
         # 기본 ROI 위치 (기존 방식 - fallback)
@@ -1968,17 +1950,9 @@ class ROIManager:
             # 랜드마크 기반 ROI가 있으면 우선 사용, 없으면 고정 비율 사용
             if name in landmark_rois:
                 rx, ry, rw, rh = landmark_rois[name]
-                # 랜드마크 사용 여부를 주기적으로 로깅 (첫 번째 ROI만)
-                if name == 'forehead' and not hasattr(self, '_landmark_usage_logged'):
-                    logger.info(f"✅ ROI '{name}': 랜드마크 기반 사용 (랜드마크 ROI: {rx},{ry},{rw},{rh})")
-                    self._landmark_usage_logged = True
             else:
                 # 동적 위치 조정 (고정 비율 기반)
                 rx, ry, rw, rh = self._adjust_roi_position(frame, bbox, base_roi, face_center_x, face_center_y)
-                # 고정 비율 사용 여부를 주기적으로 로깅 (첫 번째 ROI만)
-                if name == 'forehead' and not hasattr(self, '_fixed_ratio_usage_logged'):
-                    logger.info(f"⚠️ ROI '{name}': 고정 비율 사용 (랜드마크 없음, 고정 비율 ROI: {rx},{ry},{rw},{rh})")
-                    self._fixed_ratio_usage_logged = True
             
             # 프레임 범위 내로 클리핑
             rx = max(0, min(rx, frame.shape[1]-1))
@@ -2480,16 +2454,16 @@ class ThermalrPPG:
         # Raspberry Pi optimization
         self.pi_optimizer = RaspberryPiOptimizer(cfg)
         
-        # Fast measurement mode (비활성화)
-        self.fast_mode = None
+        # Fast measurement mode
+        self.fast_mode = FastMeasurementMode(cfg)
         
-        # AI Enhancement components (성능 최적화를 위해 비활성화)
-        self.wavelet_denoiser = None
-        self.kalman_filter = None
-        self.ensemble_optimizer = None
-        self.personalized_model = None
+        # AI Enhancement components
+        self.wavelet_denoiser = WaveletDenoiser() if cfg.enable_wavelet_denoising else None
+        self.kalman_filter = AdaptiveKalmanFilter() if cfg.enable_adaptive_filtering else None
+        self.ensemble_optimizer = EnsembleROIOptimizer(self.pi_optimizer) if cfg.enable_ensemble_learning else None
+        self.personalized_model = PersonalizedBiometricModel() if cfg.enable_personalized_model else None
         
-        # AI model update tracking (비활성화)
+        # AI model update tracking
         self._last_model_update = time.time()
         self._innovation_history = deque(maxlen=50)
         self._was_present = False
@@ -2501,6 +2475,10 @@ class ThermalrPPG:
         self.session_measurements: list = []  # 세션 동안 모든 측정값 저장
 
         logger.info(f"Config: sampling={cfg.sampling_rate}Hz, mode={cfg.processing_mode.value}")
+        logger.info(f"AI Enhancements: Wavelet={cfg.enable_wavelet_denoising}, "
+                   f"Kalman={cfg.enable_adaptive_filtering}, "
+                   f"Ensemble={cfg.enable_ensemble_learning}, "
+                   f"Personalized={cfg.enable_personalized_model}")
 
     # ---------- helpers ----------
     def _append(self, roi_vals: Dict[str, float], ambient: Optional[float]):
@@ -2550,7 +2528,13 @@ class ThermalrPPG:
                 self._ambient_ema = float(ema)
                 x = x - self.cfg.ambient_gain * (amb - np.mean(amb))
         
-        # 웨이블릿 노이즈 제거 비활성화 (성능 최적화)
+        # 웨이블릿 노이즈 제거 적용
+        if self.wavelet_denoiser is not None and len(x) >= 16:
+            try:
+                x = self.wavelet_denoiser.denoise_signal(x)
+            except Exception as e:
+                logger.warning(f"Wavelet denoising failed for {name}: {e}")
+        
         return x
 
     def _compute_hr(self):
@@ -2648,17 +2632,46 @@ class ThermalrPPG:
         }
         names_list = [str(n) for n in names_arr]
 
-        # ROI 가중치 계산 (기존 방식만 사용 - 성능 최적화)
-        roi_boost = self._roi_dynamic_boost(diag)
-        w = q_arr.copy()
-        for i, name in enumerate(names_list):
-            w[i] *= roi_boost.get(name, 1.0)
+        # 🔹 AI 기반 ROI 가중치 최적화
+        if self.ensemble_optimizer is not None:
+            # 앙상블 학습으로 최적 가중치 예측
+            forehead_buffer = list(self.buffers.get('forehead', []))
+            ambient_temp = float(np.mean(forehead_buffer)) if forehead_buffer else 25.0
+            optimal_weights = self.ensemble_optimizer.predict_optimal_weights(
+                diag, self.motion.motion_level, ambient_temp
+            )
+            w = np.array([optimal_weights.get(name, 1.0) for name in names_list], dtype=np.float32)
+        else:
+            # 기존 방식
+            roi_boost = self._roi_dynamic_boost(diag)
+            w = q_arr.copy()
+            for i, name in enumerate(names_list):
+                w[i] *= roi_boost.get(name, 1.0)
         
         w = w / (w.sum() + 1e-6)
 
-        # 최종 HR/Q (AI 보정 비활성화 - 성능 최적화)
+        # 최종 HR/Q
         hr_final = float(np.sum(hr_arr * w))
         q_final  = float(np.mean(q_arr))
+        
+        # 칼만 필터 적용
+        if self.kalman_filter is not None:
+            hr_final = self.kalman_filter.update(hr_final)
+            # 혁신 시퀀스 업데이트
+            if len(self._innovation_history) > 0:
+                innovation = hr_final - self._innovation_history[-1] if len(self._innovation_history) > 0 else 0
+                self._innovation_history.append(innovation)
+                self.kalman_filter.adapt_noise(list(self._innovation_history))
+        
+        # 개인화된 보정 적용
+        if self.personalized_model is not None:
+            forehead_buffer = list(self.buffers.get('forehead', []))
+            ambient_temp = float(np.mean(forehead_buffer)) if forehead_buffer else 25.0
+            thermal_features = {
+                'motion_level': self.motion.motion_level,
+                'ambient_temp': ambient_temp
+            }
+            hr_final = self.personalized_model.get_personalized_correction(hr_final, thermal_features)
 
         return hr_final, q_final, diag
 
@@ -3341,6 +3354,9 @@ class ThermalrPPG:
                 if present:
                     if roi_vals:
                         self._append(roi_vals, ambient_val)
+                        # 빠른 측정 모드 시작
+                        if self.fast_mode.is_active and self.fast_mode.measurement_start_time is None:
+                            self.fast_mode.start_measurement()
                 else:
                     self._decay_buffers_on_absent()
 
@@ -3384,6 +3400,9 @@ class ThermalrPPG:
                 if self._enough() and now >= self._hr_next_ts:
                     hr, q, diag = self._compute_hr()
                     self._hr_next_ts = now + self.cfg.hr_period
+                    # 첫 HR 측정 시간 기록
+                    if hr is not None and self.fast_mode.is_active:
+                        self.fast_mode.record_first_hr()
                 if hr is not None:
                     hr = self._smooth_hr(hr)    
 
@@ -3394,6 +3413,9 @@ class ThermalrPPG:
                     # 최신 RR 값 저장
                     if rr is not None:
                         self._last_rr = rr
+                    # 첫 RR 측정 시간 기록
+                    if rr is not None and self.fast_mode.is_active:
+                        self.fast_mode.record_first_rr()
                 else:
                     # RR 계산 주기가 아니면 최신 RR 값 사용
                     rr = self._last_rr
@@ -3417,7 +3439,11 @@ class ThermalrPPG:
                             logger.info(f"얼굴 인식 정상: present={present} | bbox={bbox is not None}")
                             self._last_face_log_time = time.time()
 
-                # AI 모델 업데이트 비활성화 (성능 최적화)
+                # AI 모델 업데이트 및 개인화 학습
+                now = time.time()
+                if now - self._last_model_update >= self.cfg.model_update_interval:
+                    self._update_ai_models(hr, diag, roi_vals, ambient_val)
+                    self._last_model_update = now
 
                 # Color recommendation (UI / session tracking)
                 color_rec = None
@@ -3483,17 +3509,25 @@ if __name__ == "__main__":
         mc_stride=2,
         sensor_rotation_deg=135.0,
         
-        # AI Enhancement features (성능 최적화를 위해 비활성화)
-        enable_ensemble_learning=False,
-        enable_wavelet_denoising=False,
-        enable_adaptive_filtering=False,
-        enable_personalized_model=False,
+        # AI Enhancement features
+        enable_ensemble_learning=True,
+        enable_wavelet_denoising=True,
+        enable_adaptive_filtering=True,
+        enable_personalized_model=True,
+        model_update_interval=300.0,
         
         # Raspberry Pi optimization
         enable_pi_optimization=True,
         pi_memory_limit_mb=512,
         pi_cpu_throttle=True,
         pi_reduced_precision=True,
+        
+        # Fast measurement mode (선택적 활성화)
+        enable_fast_mode=False,  # True로 변경하면 빠른 측정 모드 활성화
+        fast_min_duration=6,
+        fast_hr_period=0.5,
+        fast_present_frames=3,
+        fast_sampling_rate=20.0,
         
         # Upscaling (카메라 거리에 따라 조정: 가까우면 3-4, 멀면 5-6)
         up_scale=4,  # 기본값 4 (기존 6에서 성능 향상을 위해 낮춤)

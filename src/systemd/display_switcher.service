@@ -1,0 +1,50 @@
+[Unit]
+Description=DeepTree Display Switcher
+After=network-online.target graphical.target
+Wants=network-online.target
+# carecall 서비스와 함께 시작되지만 의존성은 없음 (독립 실행)
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__PROJECT_ROOT__
+Environment="PATH=__VENV_ROOT__/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="DISPLAY=:0"
+Environment="XDG_RUNTIME_DIR=__XDG_RUNTIME_DIR__"
+Environment="XAUTHORITY=__XAUTHORITY__"
+
+# X11 권한 설정 및 Kafka 포트 체크
+ExecStartPre=/bin/bash -c 'DISPLAY=:0 xhost +SI:localuser:__SERVICE_USER__ 2>/dev/null || true'
+ExecStartPre=/bin/bash -c 'for i in {1..60}; do nc -z localhost 9092 && break || sleep 1; done || echo "Kafka not ready, continuing anyway"'
+
+# 실행 명령
+ExecStart=__PYTHON_BIN__ -m apps.display_switcher --idle-timeout 30 --enable-uart-producer
+
+# 재시작 정책 (지수 백오프)
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# 타임아웃 설정
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+# 프로세스 종료 정책
+KillMode=mixed
+KillSignal=SIGTERM
+
+# 리소스 제한
+MemoryLimit=1G
+MemoryHigh=800M
+
+# 로그 설정
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=display-switcher
+
+[Install]
+WantedBy=multi-user.target
+

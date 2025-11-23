@@ -22,7 +22,7 @@ class AudioConfig:
     end_silence_ms: int = 800
     device_rate: int = 0  # 0이면 자동 감지
     use_raw_stream: bool = False
-    input_device: Optional[str] = "1"
+    input_device: Optional[str] = "hw:3,0"
 
 @dataclass
 class WhisperConfig:
@@ -43,7 +43,7 @@ class OpenAIConfig:
 @dataclass
 class ServerConfig:
     """DeepCare API 서버 설정"""
-    base_url: str = "https://deepcare-api.thedeeplabs.com/api"
+    base_url: str = "http://192.168.0.63:8005/api"
     timeout: int = 30
     max_retries: int = 3
     retry_delay: int = 1
@@ -65,6 +65,16 @@ class ActivationConfig:
             "케어콜 시작",
             "케어콜 시작해줘",
             "케어콜 불러줘",
+            "케어콜 실행",
+            "어콜 시작",
+            "어콜 시작해줘",
+            "에어콜 시작",
+            "에어콜 시작해줘",
+            "에어콜 실행",
+            "에어콜 불러줘",
+            "에어콜 불러줘",
+            "시작",
+            "실행",    
         ]
     )
 

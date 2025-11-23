@@ -1,0 +1,45 @@
+[Unit]
+Description=DeepTree rPPG Module
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__PROJECT_ROOT__
+Environment="PATH=__VENV_ROOT__/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="DISPLAY=:0"
+Environment="XDG_RUNTIME_DIR=__XDG_RUNTIME_DIR__"
+Environment="XAUTHORITY=__XAUTHORITY__"
+
+# 실행 명령
+ExecStart=__PYTHON_BIN__ -m modules.rppg.thermal_rppg
+
+# 재시작 정책 (지수 백오프)
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# 타임아웃 설정
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+# 프로세스 종료 정책
+KillMode=mixed
+KillSignal=SIGTERM
+
+# 리소스 제한
+MemoryLimit=1G
+MemoryHigh=800M
+
+# 로그 설정
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rppg
+
+[Install]
+WantedBy=multi-user.target
+

@@ -39,7 +39,7 @@ def _split_hosts(value: str) -> List[str]:
 @dataclass
 class KafkaSettings:
     bootstrap_servers: List[str] = field(
-        default_factory=lambda: _split_hosts(os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
+        default_factory=lambda: _split_hosts(os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092"))
     )
     sensor_topic: str = os.getenv("KAFKA_SENSOR_TOPIC", "sensors.uart")
     group_id: str = os.getenv("KAFKA_GROUP_ID", "uart-display")
@@ -109,7 +109,7 @@ class EmotionProducerSettings:
 
     # 공용 접속/보안 설정 재사용
     bootstrap_servers: List[str] = field(
-        default_factory=lambda: _split_hosts(os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
+        default_factory=lambda: _split_hosts(os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092"))
     )
     security_protocol: str = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
     sasl_mechanism: str | None = os.getenv("KAFKA_SASL_MECHANISM") or None

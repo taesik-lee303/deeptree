@@ -164,6 +164,18 @@ def main():
                         hex_str = ' '.join(f'{b:02x}' for b in chunk[:20])
                         ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in chunk[:20])
                         print(f"\n[RAW] Received {len(chunk)} bytes: {hex_str} | {ascii_str}")
+                        
+                        # 바이트 패턴 분석
+                        valid_ascii = sum(1 for b in chunk if 32 <= b < 127)
+                        ff_count = sum(1 for b in chunk if b == 0xff)
+                        if valid_ascii == 0 and len(chunk) > 0:
+                            print(f"  ⚠ WARNING: No valid ASCII characters detected!")
+                            print(f"  ⚠ This usually indicates:")
+                            print(f"     1. Baud rate mismatch (try different rates: 115200, 57600, 38400, 19200, 9600)")
+                            print(f"     2. UART wiring issue (TX/RX swapped or loose connection)")
+                            print(f"     3. Pico not sending valid JSON data")
+                        elif ff_count > len(chunk) * 0.5:
+                            print(f"  ⚠ WARNING: Many 0xFF bytes ({ff_count}/{len(chunk)}) - possible baud rate mismatch")
             
             # 버퍼에서 완전한 라인 찾기 (\n으로 끝나는)
             if b'\n' in buffer:

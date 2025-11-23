@@ -171,6 +171,21 @@ class MP4Player:
             self.consumer_thread.start()
 
             self.logger.info(f"MP4 Player started, listening on topic: {self.config.topic}")
+            
+            # 시작 시 기본 비디오 재생 (화면이 비어있지 않도록)
+            # neutral 비디오가 있으면 재생, 없으면 default 비디오 재생
+            default_video = None
+            if "neutral" in self.video_configs:
+                default_video = self.video_configs["neutral"]
+            elif "default" in self.video_configs:
+                default_video = self.video_configs["default"]
+            elif self.video_configs:
+                # 첫 번째 비디오 재생
+                default_video = list(self.video_configs.values())[0]
+            
+            if default_video:
+                self.logger.info(f"Playing default video on start: {default_video.file_path}")
+                self._play_video(default_video)
 
         except Exception as e:
             self.logger.error(f"Failed to start player: {e}")

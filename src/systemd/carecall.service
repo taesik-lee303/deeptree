@@ -1,0 +1,51 @@
+[Unit]
+Description=DeepTree Carecall Module
+After=network-online.target sound.target graphical.target
+Wants=network-online.target
+# Kafka가 준비될 때까지 대기 (Docker Compose로 실행 중인 경우)
+# docker-compose가 systemd 서비스가 아닌 경우를 대비해 After는 설정하지 않음
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__PROJECT_ROOT__
+Environment="PATH=__VENV_ROOT__/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="DISPLAY=:0"
+Environment="XDG_RUNTIME_DIR=__XDG_RUNTIME_DIR__"
+Environment="XAUTHORITY=__XAUTHORITY__"
+
+# X11 권한 설정 및 Kafka 포트 체크
+ExecStartPre=/bin/bash -c 'DISPLAY=:0 xhost +SI:localuser:__SERVICE_USER__ 2>/dev/null || true'
+ExecStartPre=/bin/bash -c 'for i in {1..60}; do nc -z localhost 9092 && break || sleep 1; done || echo "Kafka not ready, continuing anyway"'
+
+# 실행 명령
+ExecStart=__PYTHON_BIN__ -m modules.carecall.main
+
+# 재시작 정책 (지수 백오프: 5초, 10초, 20초, 최대 30초)
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# 타임아웃 설정
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+# 프로세스 종료 정책
+KillMode=mixed
+KillSignal=SIGTERM
+
+# 리소스 제한 (메모리 누수 방지)
+MemoryLimit=2G
+MemoryHigh=1.5G
+
+# 로그 설정
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=carecall
+
+[Install]
+WantedBy=multi-user.target
+

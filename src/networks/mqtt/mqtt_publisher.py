@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 import json, time
+from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 
 try:
@@ -70,24 +71,35 @@ class MqttColorPublisher:
         self._last_key = key
         self._last_pub_ts = now
 
-        rich = {
-            "rgb": list(rec.rgb_primary),
-            "intensity": float(rec.intensity),
-            "mode": rec.mode,
-            "duration": int(rec.duration_seconds),
-            "confidence": float(rec.confidence),
-            "metrics": metrics or {},
-            "ts": int(now)
+        # 새로운 형식으로 메시지 구성
+        hr = metrics.get('hr') if metrics else None
+        q = metrics.get('q') if metrics else 0.0
+        rr = metrics.get('rr') if metrics else None
+        
+        # datetime 문자열 생성
+        dt_str = datetime.fromtimestamp(now).isoformat()
+        
+        payload = {
+            "timestamp": now,
+            "datetime": dt_str,
+            "hr": float(hr) if hr is not None else None,
+            "q": float(q),
+            "hr_unit": "BPM",
+            "rr": float(rr) if rr is not None else None,
+            "rr_unit": "RPM" if rr is not None else None
         }
+        
+        # None 값 제거
+        payload = {k: v for k, v in payload.items() if v is not None}
         
         # 토픽 선택: to_status가 True면 status, False면 total
         topic = settings.topic_status if to_status else settings.topic_total
         
         try:
-            result = self.client.publish(topic, json.dumps(rich), qos=1, retain=False)
+            result = self.client.publish(topic, json.dumps(payload), qos=1, retain=False)
             if result.rc == 0:
                 import logging
-                logging.getLogger(__name__).debug(f"MQTT published to {topic}: {len(json.dumps(rich))} bytes")
+                logging.getLogger(__name__).debug(f"MQTT published to {topic}: {len(json.dumps(payload))} bytes")
             else:
                 import logging
                 logging.getLogger(__name__).warning(f"MQTT publish failed to {topic}: rc={result.rc}")

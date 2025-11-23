@@ -1,45 +1,61 @@
 [Unit]
-Description=DeepTree System Launcher
+Description=DeepTree System Launcher (All Modules)
 Documentation=https://github.com/your-repo/deeptree
-After=network-online.target
-Wants=network-online.target
+After=network-online.target sound.target graphical.target multi-user.target docker.service
+Wants=network-online.target docker.service
+# WARNING: Do not use this service if individual services (deeptree-carecall, deeptree-rppg, deeptree-display-switcher) are enabled
+# This service runs apps/launcher.py which starts all modules, causing conflicts with individual services
 
 [Service]
-Type=simple
-User=pi
-Group=pi
+# Type=idle: 모든 시스템 리소스가 준비된 후에만 실행 (재부팅 시 안정성 향상)
+Type=idle
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
 
-# 프로젝트 경로 (실제 경로에 맞게 수정 필요)
-WorkingDirectory=/home/pi/deeptree/src
+# 프로젝트 경로
+WorkingDirectory=__PROJECT_ROOT__
 
 # 환경 변수 설정
-Environment="PATH=/home/pi/deeptree/src/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=__VENV_ROOT__/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 Environment="RPPG_DEBUG_VISUAL=0"
+Environment="DISPLAY=:0"
+Environment="XDG_RUNTIME_DIR=__XDG_RUNTIME_DIR__"
+Environment="XAUTHORITY=__XAUTHORITY__"
 
-# .env 파일 로드 (선택적)
-# EnvironmentFile=/home/pi/deeptree/src/.env
+# GUI 세션 준비 대기 (최대 3분, 실패해도 계속 진행)
+ExecStartPre=/bin/bash -c 'echo "[deeptree] Waiting for GUI session..."; for i in {1..180}; do if [ -S /tmp/.X11-unix/X0 ] && [ -f __XAUTHORITY__ ] && DISPLAY=:0 xset q >/dev/null 2>&1; then echo "[deeptree] GUI session ready (waited ${i}s)"; break; fi; sleep 1; done || echo "[deeptree] GUI check timeout, continuing anyway"; true'
+# X11 권한 설정
+ExecStartPre=/bin/bash -c 'DISPLAY=:0 xhost +SI:localuser:__SERVICE_USER__ 2>/dev/null && echo "[deeptree] X11 permissions set" || echo "[deeptree] X11 permission setting failed, continuing"; true'
+# Kafka 포트 체크 및 완전 준비 대기 (최대 5분)
+# Docker 컨테이너가 시작되고 Kafka broker가 완전히 준비될 때까지 대기
+ExecStartPre=/bin/bash -c 'echo "[deeptree] Waiting for Kafka..."; for i in {1..300}; do if nc -z localhost 9092 2>/dev/null; then echo "[deeptree] Kafka port open (waited ${i}s), verifying broker is ready..."; sleep 2; if docker exec kafka kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1 || nc -z localhost 9092; then echo "[deeptree] Kafka ready (waited ${i}s)"; break; fi; fi; sleep 1; done || echo "[deeptree] Kafka not ready after 5min, continuing anyway"; true'
 
 # 실행 명령
-ExecStart=/home/pi/deeptree/src/venv/bin/python -m apps.launcher
+ExecStart=__PYTHON_BIN__ -m apps.launcher
 
-# 재시작 정책
+# 재시작 정책 (지수 백오프)
 Restart=always
-RestartSec=10
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# 타임아웃 설정 (GUI 준비 대기 시간 3분 + Kafka 준비 대기 시간 5분 + 여유)
+TimeoutStartSec=600
+TimeoutStopSec=30
+
+# 프로세스 관리
+KillMode=mixed
+KillSignal=SIGTERM
+
+# 리소스 제한 (메모리 누수 방지)
+MemoryLimit=3G
+MemoryHigh=2.5G
 
 # 로그 설정
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=deeptree
-
-# 프로세스 관리
-KillMode=mixed
-KillSignal=SIGTERM
-TimeoutStopSec=30
-
-# 리소스 제한 (선택적)
-# MemoryLimit=1G
-# CPUQuota=80%
 
 [Install]
 WantedBy=multi-user.target
