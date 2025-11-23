@@ -161,8 +161,9 @@ class TTSManager:
 
 class LocalCommandHandler:
     """로컬 명령어 처리기"""
-    def __init__(self, tts_manager: TTSManager):
+    def __init__(self, tts_manager: TTSManager, conversation_manager=None):
         self.tts = tts_manager
+        self.conversation_manager = conversation_manager  # ConversationManager 참조 추가
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # ✨ 필러 문구 리스트 추가 (AttributeError 원인 제거)
@@ -231,9 +232,45 @@ class LocalCommandHandler:
         for keyword, handler in self.commands.items():
             if keyword in text:
                 try:
-                    response = handler()
-                    self.logger.info(f"Local command handled: {keyword} -> {response}")
-                    return response
+                    # 종료 명령인 경우 API 호출하여 end=true 확인
+                    if self.is_exit_command(text) and self.conversation_manager and self.conversation_manager.ai_client:
+                        self.logger.info(f"Exit command detected: {keyword}, checking with API...")
+                        # API 호출하여 서버 응답 확인
+                        try:
+                            emotion = "neutral"
+                            resp = self.conversation_manager.ai_client.send_chat_request(text, emotion)
+                            if resp and resp.success:
+                                # API 응답이 있으면 서버 응답 사용
+                                if resp.ai_response:
+                                    self.logger.info(f"API response for exit command: {resp.ai_response}, end={getattr(resp, 'end', False)}")
+                                    # end=true면 종료 신호 반환 (특별한 값)
+                                    if getattr(resp, 'end', False):
+                                        return "__EXIT_CONFIRMED__"  # 종료 확인됨
+                                    else:
+                                        # end=false면 서버 응답 사용
+                                        return resp.ai_response
+                                else:
+                                    # 응답이 없으면 로컬 응답 사용
+                                    response = handler()
+                                    self.logger.info(f"Local command handled (no API response): {keyword} -> {response}")
+                                    return response
+                            else:
+                                # API 호출 실패 시 로컬 응답 사용
+                                self.logger.warning(f"API call failed for exit command, using local response")
+                                response = handler()
+                                self.logger.info(f"Local command handled: {keyword} -> {response}")
+                                return response
+                        except Exception as e:
+                            self.logger.error(f"Error calling API for exit command: {e}")
+                            # API 호출 실패 시 로컬 응답 사용
+                            response = handler()
+                            self.logger.info(f"Local command handled (API error): {keyword} -> {response}")
+                            return response
+                    else:
+                        # 일반 명령어는 기존대로 처리
+                        response = handler()
+                        self.logger.info(f"Local command handled: {keyword} -> {response}")
+                        return response
                 except Exception as e:
                     self.logger.error(f"Local command error: {e}")
                     return "죄송합니다. 처리 중 오류가 발생했습니다."

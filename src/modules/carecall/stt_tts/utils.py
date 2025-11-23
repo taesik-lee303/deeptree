@@ -484,7 +484,7 @@ class ConversationManager:
         if self.tts:
             # LocalCommandHandler는 tts.py 내에 정의
             from modules.carecall.stt_tts.tts import LocalCommandHandler
-            self.local_command_handler = LocalCommandHandler(self.tts)
+            self.local_command_handler = LocalCommandHandler(self.tts, conversation_manager=self)
 
         self.logger = get_logger(self.__class__.__name__)
         self.kafka = KafkaProducerClient(emotion_settings) if emotion_settings.enabled else None
@@ -572,9 +572,20 @@ class ConversationManager:
                 self.logger.error(f"Local command error: {e}")
 
         if local_response:
+            # 종료 확인 신호인 경우 (API에서 end=true 받음)
+            if local_response == "__EXIT_CONFIRMED__":
+                self.logger.info("Exit confirmed by API (end=true), stopping conversation...")
+                self._speak_response("네 알겠습니다. 안녕히 계세요.")
+                self.stop_conversation()
+                return
+            
             # 로컬 응답은 곧바로 말하고 종료/복귀
             self._speak_response(local_response)
-            if self.local_command_handler.is_exit_command(text):
+            # 종료 명령이지만 API에서 end=false인 경우는 계속 진행
+            if self.local_command_handler.is_exit_command(text) and local_response != "__EXIT_CONFIRMED__":
+                # API에서 end=false를 받았거나 API 호출 실패한 경우
+                # 사용자가 명시적으로 종료 명령을 했으므로 종료
+                self.logger.info("Exit command detected (API end=false or failed), stopping conversation...")
                 self.stop_conversation()
                 return
             self.state = "LISTENING"
