@@ -197,9 +197,6 @@ class ThermalrPPGConfig:
     simple_lost_tolerance: int = 8
     simple_presence_frames: int = 3
     simple_absence_frames: int = 6
-    simple_min_hot_delta: float = 1.0  # 얼굴 평균 온도가 주변보다 이 이상 높아야 함
-    simple_min_aspect: float = 0.7
-    simple_max_aspect: float = 1.7
 
 
 # --------------------- AI Enhancement Classes ---------------------
@@ -812,19 +809,10 @@ class SimpleFaceTracker:
         self.max_area_frac = cfg.simple_max_face_frac
         self.hot_percentile = cfg.simple_hot_percentile
         self.max_missed = cfg.simple_lost_tolerance
-        self.min_hot_delta = cfg.simple_min_hot_delta
-        self.min_aspect = cfg.simple_min_aspect
-        self.max_aspect = cfg.simple_max_aspect
         self.prev_bbox: Optional[Tuple[int, int, int, int]] = None
         self.missed = 0
-        self._last_false_alarm_log = 0.0
 
-    def _largest_component(
-        self,
-        mask: np.ndarray,
-        frame: np.ndarray,
-        frame_mean: float,
-    ) -> Optional[Tuple[int, int, int, int, float]]:
+    def _largest_component(self, mask: np.ndarray) -> Optional[Tuple[int, int, int, int, float]]:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None
@@ -838,28 +826,6 @@ class SimpleFaceTracker:
             if area < min_area or area > max_area:
                 continue
             x, y, bw, bh = cv2.boundingRect(cnt)
-            if bh == 0:
-                continue
-            ar = bw / bh
-            if ar < self.min_aspect or ar > self.max_aspect:
-                continue
-            region = frame[y:y+bh, x:x+bw]
-            if region.size == 0:
-                continue
-            region_mean = float(np.mean(region))
-            if region_mean - frame_mean < self.min_hot_delta:
-                # 주변보다 충분히 뜨겁지 않으면 얼굴로 취급하지 않음
-                now = time.time()
-                if now - self._last_false_alarm_log > 5.0:
-                    logger.debug(
-                        "Simple tracker rejected blob: mean %.2f°C, bg %.2f°C, delta %.2f°C (< %.2f°C)",
-                        region_mean,
-                        frame_mean,
-                        region_mean - frame_mean,
-                        self.min_hot_delta,
-                    )
-                    self._last_false_alarm_log = now
-                continue
             score = float(area)
             if self.prev_bbox is not None:
                 px, py, pw, ph = self.prev_bbox
@@ -881,7 +847,6 @@ class SimpleFaceTracker:
         if frame is None or frame.size == 0:
             return None
         frame_u8 = normalize_to_uint8(frame)
-        frame_mean = float(np.mean(frame))
         blur = cv2.GaussianBlur(frame_u8, (5, 5), 0)
         thr = np.percentile(blur, self.hot_percentile)
         _, mask = cv2.threshold(blur, thr, 255, cv2.THRESH_BINARY)
@@ -890,7 +855,7 @@ class SimpleFaceTracker:
         kernel5 = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel5, iterations=2)
 
-        comp = self._largest_component(mask, frame, frame_mean)
+        comp = self._largest_component(mask)
         if comp is None:
             self.missed += 1
             if self.missed > self.max_missed:

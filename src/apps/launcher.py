@@ -131,8 +131,7 @@ async def run_launcher(
     else:
         env["PYTHONPATH"] = src_path
 
-    # RPPG 모듈이 기본적으로 모니터링 UI를 띄우도록 유지
-    env.setdefault("RPPG_DEBUG_VISUAL", "1")
+    env.setdefault("RPPG_DEBUG_VISUAL", "0")
     module_displays = module_displays or {}
 
     for name in modules:
