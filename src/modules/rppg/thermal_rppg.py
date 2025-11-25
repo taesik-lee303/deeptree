@@ -187,6 +187,16 @@ class ThermalrPPGConfig:
     ui_scale: float = 2.5  # 모니터링 화면 확대 배수 (1.0=기본, 2.0=2배, 2.5=2.5배 등)
     ui_window_width: Optional[int] = None  # 창 초기 너비 (None이면 자동, 권장: 1280-1920)
     ui_window_height: Optional[int] = None  # 창 초기 높이 (None이면 자동, 권장: 720-1080)
+    
+    # Simple pipeline parameters
+    simple_mode: bool = True  # 단순화된 파이프라인 활성화 여부
+    simple_up_scale: int = 4
+    simple_hot_percentile: float = 80.0
+    simple_min_face_frac: float = 0.015
+    simple_max_face_frac: float = 0.6
+    simple_lost_tolerance: int = 8
+    simple_presence_frames: int = 3
+    simple_absence_frames: int = 6
 
 
 # --------------------- AI Enhancement Classes ---------------------
@@ -792,6 +802,115 @@ class MultiFrameSuperRes:
 
 
 # --------------------- Detection / Tracking ---------------------
+class SimpleFaceTracker:
+    """단순 임계값 + 연결요소 기반 얼굴 후보 추적기."""
+    def __init__(self, cfg: ThermalrPPGConfig):
+        self.min_area_frac = cfg.simple_min_face_frac
+        self.max_area_frac = cfg.simple_max_face_frac
+        self.hot_percentile = cfg.simple_hot_percentile
+        self.max_missed = cfg.simple_lost_tolerance
+        self.prev_bbox: Optional[Tuple[int, int, int, int]] = None
+        self.missed = 0
+
+    def _largest_component(self, mask: np.ndarray) -> Optional[Tuple[int, int, int, int, float]]:
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+        h, w = mask.shape[:2]
+        min_area = h * w * self.min_area_frac
+        max_area = h * w * self.max_area_frac
+        best_score = -1e9
+        best_bbox = None
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_area or area > max_area:
+                continue
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            score = float(area)
+            if self.prev_bbox is not None:
+                px, py, pw, ph = self.prev_bbox
+                prev_cx = px + pw / 2
+                prev_cy = py + ph / 2
+                cx = x + bw / 2
+                cy = y + bh / 2
+                dist = np.hypot(cx - prev_cx, cy - prev_cy)
+                score -= dist * 25.0  # 가까울수록 가산
+            else:
+                score -= abs((y + bh / 2) - h * 0.4) * 10.0  # 얼굴이 프레임 상단에 위치하도록 가중
+            if score > best_score:
+                best_score = score
+                best_bbox = (x, y, bw, bh, area)
+        return best_bbox
+
+    def update(self, frame: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+        """업스케일된 열화상 프레임에서 얼굴 bbox 추정."""
+        if frame is None or frame.size == 0:
+            return None
+        frame_u8 = normalize_to_uint8(frame)
+        blur = cv2.GaussianBlur(frame_u8, (5, 5), 0)
+        thr = np.percentile(blur, self.hot_percentile)
+        _, mask = cv2.threshold(blur, thr, 255, cv2.THRESH_BINARY)
+        kernel3 = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel3, iterations=1)
+        kernel5 = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel5, iterations=2)
+
+        comp = self._largest_component(mask)
+        if comp is None:
+            self.missed += 1
+            if self.missed > self.max_missed:
+                self.prev_bbox = None
+            return None
+
+        x, y, w, h, _ = comp
+        if self.prev_bbox is not None:
+            # 부드러운 이동
+            alpha = 0.25
+            px, py, pw, ph = self.prev_bbox
+            x = int(px * (1 - alpha) + x * alpha)
+            y = int(py * (1 - alpha) + y * alpha)
+            w = int(pw * (1 - alpha) + w * alpha)
+            h = int(ph * (1 - alpha) + h * alpha)
+
+        self.prev_bbox = (x, y, w, h)
+        self.missed = 0
+        return self.prev_bbox
+
+
+class SimpleROIExtractor:
+    """고정 비율 기반 단순 ROI 추출기."""
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def _base_rois(x: int, y: int, w: int, h: int) -> Dict[str, Tuple[float, float, float, float]]:
+        return {
+            'forehead': (x + 0.25 * w, y + 0.05 * h, 0.5 * w, 0.25 * h),
+            'l_cheek': (x + 0.05 * w, y + 0.45 * h, 0.25 * w, 0.25 * h),
+            'r_cheek': (x + 0.70 * w, y + 0.45 * h, 0.25 * w, 0.25 * h),
+            'nose': (x + 0.40 * w, y + 0.35 * h, 0.20 * w, 0.25 * h),
+        }
+
+    def extract(self, frame: np.ndarray, bbox: Optional[Tuple[int, int, int, int]]) -> Tuple[Dict[str, float], Dict[str, Tuple[int, int, int, int]]]:
+        if bbox is None:
+            return {}, {}
+        x, y, w, h = bbox
+        H, W = frame.shape[:2]
+        vals: Dict[str, float] = {}
+        boxes: Dict[str, Tuple[int, int, int, int]] = {}
+        for name, (rx, ry, rw, rh) in self._base_rois(x, y, w, h).items():
+            ix = int(np.clip(rx, 0, W - 1))
+            iy = int(np.clip(ry, 0, H - 1))
+            iw = int(np.clip(rw, 2, W - ix))
+            ih = int(np.clip(rh, 2, H - iy))
+            region = frame[iy:iy+ih, ix:ix+iw]
+            if region.size == 0:
+                continue
+            vals[name] = float(np.mean(region))
+            boxes[name] = (ix, iy, iw, ih)
+        return vals, boxes
+
+
 class ThermalFaceDetector:
     def __init__(self, ambient_delta: float = 0.5, p_hot: float = 65.0,  # 임계값 완화 (얼굴 영역 더 넓게 감지)
                  min_area_frac: float = 0.015, max_area_frac: float = 0.5,  # 면적 범위 확대
@@ -2427,39 +2546,48 @@ class ThermalrPPG:
     def __init__(self, cfg: ThermalrPPGConfig, mqtt_pub: Optional[MqttColorPublisher] = None):
         self.cfg = cfg
         self.sensor = MLX9064XInterface(refresh_hz=int(cfg.sampling_rate))
-        self.detector = ThermalFaceDetector(
-            ambient_delta=0.5,  # 임계값 완화
-            p_hot=65.0,  # 임계값 완화
-            enable_preprocessing=cfg.enable_face_preprocessing,
-            enable_clahe=cfg.enable_clahe,
-            enable_bilateral=cfg.enable_bilateral_filter,
-            clahe_clip_limit=cfg.clahe_clip_limit,
-            clahe_tile_size=cfg.clahe_tile_size,
-            face_temp_range=cfg.face_temp_range,
-            enable_kcf=cfg.enable_kcf_tracking
-        )
-        self.motion = MotionCompensator()
-        self.motion.mc_stride = cfg.mc_stride
-        
-        # 얼굴 랜드마크 검출기 초기화
-        self.landmark_detector = FaceLandmarkDetector(
-            model=cfg.landmark_model,
-            min_detection_confidence=cfg.landmark_min_detection_confidence,
-            min_tracking_confidence=cfg.landmark_min_tracking_confidence,
-            enable=cfg.enable_face_landmarks
-        ) if cfg.enable_face_landmarks else None
-        
-        self.roi = ROIManager(
-            patch_size=cfg.roi_patch_size,
-            use_weighted_mean=cfg.roi_use_weighted_mean,
-            center_weight=cfg.roi_center_weight,
-            dynamic_positioning=cfg.roi_dynamic_positioning,
-            use_center_only=cfg.roi_use_center_only,
-            landmark_detector=self.landmark_detector,
-            enable_subdivision=cfg.roi_enable_subdivision,
-            subdivision_threshold=cfg.roi_subdivision_threshold,
-            subdivision_min_size=cfg.roi_subdivision_min_size
-        )
+        self.simple_mode = cfg.simple_mode
+        if self.simple_mode:
+            self.detector = None
+            self.motion = None
+            self.landmark_detector = None
+            self.roi = None
+            self.simple_tracker = SimpleFaceTracker(cfg)
+            self.simple_roi = SimpleROIExtractor()
+        else:
+            self.detector = ThermalFaceDetector(
+                ambient_delta=0.5,  # 임계값 완화
+                p_hot=65.0,  # 임계값 완화
+                enable_preprocessing=cfg.enable_face_preprocessing,
+                enable_clahe=cfg.enable_clahe,
+                enable_bilateral=cfg.enable_bilateral_filter,
+                clahe_clip_limit=cfg.clahe_clip_limit,
+                clahe_tile_size=cfg.clahe_tile_size,
+                face_temp_range=cfg.face_temp_range,
+                enable_kcf=cfg.enable_kcf_tracking
+            )
+            self.motion = MotionCompensator()
+            self.motion.mc_stride = cfg.mc_stride
+            self.landmark_detector = FaceLandmarkDetector(
+                model=cfg.landmark_model,
+                min_detection_confidence=cfg.landmark_min_detection_confidence,
+                min_tracking_confidence=cfg.landmark_min_tracking_confidence,
+                enable=cfg.enable_face_landmarks
+            ) if cfg.enable_face_landmarks else None
+            self.roi = ROIManager(
+                patch_size=cfg.roi_patch_size,
+                use_weighted_mean=cfg.roi_use_weighted_mean,
+                center_weight=cfg.roi_center_weight,
+                dynamic_positioning=cfg.roi_dynamic_positioning,
+                use_center_only=cfg.roi_use_center_only,
+                landmark_detector=self.landmark_detector,
+                enable_subdivision=cfg.roi_enable_subdivision,
+                subdivision_threshold=cfg.roi_subdivision_threshold,
+                subdivision_min_size=cfg.roi_subdivision_min_size
+            )
+        if self.simple_mode:
+            self.motion = MotionCompensator()
+            self.motion.mc_stride = cfg.mc_stride
         self.proc = SignalProc(cfg.sampling_rate, band=cfg.target_hr_range)
         self.resp = RespEstimator(cfg.sampling_rate)
         self.buffers: Dict[str, deque] = {}
@@ -2494,7 +2622,7 @@ class ThermalrPPG:
         self._last_status = {'ts': 0.0, 'hr': None, 'rr': None, 'q': None, 'dtn': None, 'dtc': None}
         self._persp_until = 0.0
         self._ambient_ema = None
-        self.presence = PresenceGate(cfg)
+        self.presence = PresenceGate(cfg) if not self.simple_mode else None
         self._hr_smooth: Optional[float] = None
         self._hr_ts: Optional[float] = None
         
@@ -2519,7 +2647,10 @@ class ThermalrPPG:
         self._was_present = False
         # 세션 관련 변수 제거 (세션 종료 로직 제거)
 
-        logger.info(f"Config: sampling={cfg.sampling_rate}Hz, mode={cfg.processing_mode.value}")
+        self.simple_present = False
+        self.simple_present_cnt = 0
+        self.simple_absent_cnt = 0
+        logger.info(f"Config: sampling={cfg.sampling_rate}Hz, mode={cfg.processing_mode.value}, simple_mode={self.simple_mode}")
 
     # ---------- helpers ----------
     def _append(self, roi_vals: Dict[str, float], ambient: Optional[float]):
@@ -2971,6 +3102,9 @@ class ThermalrPPG:
 
     # ---------- main loop ----------
     def run(self):
+        if self.simple_mode:
+            self._run_simple()
+            return
         try:
             while True:
                 frame = self.sensor.read_frame()
@@ -3196,6 +3330,100 @@ class ThermalrPPG:
                     if action == 'quit':
                         break
 
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.sensor.close()
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass
+
+    def _run_simple(self):
+        """단순화된 파이프라인: 빠른 얼굴 검출 + 기본 ROI + 즉시 측정."""
+        try:
+            while True:
+                frame = self.sensor.read_frame()
+                if frame is None:
+                    time.sleep(0.005)
+                    continue
+                H, W = frame.shape
+                if abs(self.cfg.sensor_rotation_deg) > 1e-3:
+                    frame = self._rotate_sensor(frame, self.cfg.sensor_rotation_deg)
+
+                up = cv2.resize(frame, (W * self.cfg.simple_up_scale, H * self.cfg.simple_up_scale), interpolation=cv2.INTER_LINEAR)
+                bbox = self.simple_tracker.update(up)
+
+                if bbox is not None:
+                    self.simple_present_cnt += 1
+                    self.simple_absent_cnt = 0
+                    if not self.simple_present and self.simple_present_cnt >= self.cfg.simple_presence_frames:
+                        self.simple_present = True
+                else:
+                    self.simple_present_cnt = 0
+                    if self.simple_present:
+                        self.simple_absent_cnt += 1
+                        if self.simple_absent_cnt >= self.cfg.simple_absence_frames:
+                            self.simple_present = False
+                            self._decay_buffers_on_absent()
+
+                roi_vals, roi_boxes = self.simple_roi.extract(up, bbox)
+                if self.simple_present and roi_vals:
+                    self._append(roi_vals, None)
+
+                now = time.time()
+                hr, q, diag = (None, 0.0, {})
+                if self.simple_present and self._enough() and now >= self._hr_next_ts:
+                    hr, q, diag = self._compute_hr()
+                    self._hr_next_ts = now + self.cfg.hr_period
+                if hr is not None:
+                    hr = self._smooth_hr(hr)
+
+                rr = None
+                if self.simple_present and now >= self._rr_next_ts:
+                    rr, _ = self._compute_rr()
+                    self._rr_next_ts = now + self.cfg.rr_period
+                    if rr is not None:
+                        self._last_rr = rr
+                else:
+                    rr = self._last_rr
+
+                dT_nose, dT_cheek, fh_temp = (None, None, None)
+                if self.simple_present:
+                    dT_nose, dT_cheek, fh_temp = self._compute_dT(win_sec=5)
+
+                color_rec = None
+                if hr is not None and self.simple_present:
+                    color_rec = self.therapist.recommend(
+                        ColorMetrics(hr=hr, q=q, rr=rr, dT_nose=dT_nose, dT_cheek=dT_cheek, forehead_temp=fh_temp)
+                    )
+
+                self._maybe_status(hr, q, rr, dT_nose, dT_cheek, color_rec, None)
+
+                if self.cfg.enable_realtime_mqtt and self.simple_present and hr is not None:
+                    self._maybe_realtime_mqtt(hr, q, rr, dT_nose, dT_cheek, fh_temp, color_rec, None)
+
+                if self.monitor is not None:
+                    thermal_u8_sr = normalize_to_uint8(up)
+                    thermal_u8_lr = normalize_to_uint8(cv2.resize(frame, (up.shape[1], up.shape[0]), interpolation=cv2.INTER_LINEAR))
+                    samples = len(self.buffers.get('forehead', [])) if self.simple_present else 0
+                    action = self.monitor.update(
+                        thermal_u8_lr,
+                        bbox,
+                        roi_boxes,
+                        hr,
+                        q,
+                        rr,
+                        dT_nose,
+                        dT_cheek,
+                        samples,
+                        thermal_u8_sr,
+                        tracking_ok=bbox is not None,
+                        color_rec=color_rec,
+                        artifacts=None,
+                    )
+                    if action == 'quit':
+                        break
         except KeyboardInterrupt:
             pass
         finally:
