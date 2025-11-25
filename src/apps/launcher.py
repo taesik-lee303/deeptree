@@ -96,7 +96,11 @@ async def terminate_process(name: str, proc: asyncio.subprocess.Process) -> None
         await proc.wait()
 
 
-async def run_launcher(modules: Sequence[str], module_args: Dict[str, List[str]]) -> int:
+async def run_launcher(
+    modules: Sequence[str],
+    module_args: Dict[str, List[str]],
+    module_displays: Optional[Dict[str, str]] = None,
+) -> int:
     if not modules:
         print("[launcher] No modules selected to run.")
         return 1
@@ -128,6 +132,7 @@ async def run_launcher(modules: Sequence[str], module_args: Dict[str, List[str]]
         env["PYTHONPATH"] = src_path
 
     env.setdefault("RPPG_DEBUG_VISUAL", "0")
+    module_displays = module_displays or {}
 
     for name in modules:
         spec = MODULE_REGISTRY[name]
@@ -138,12 +143,16 @@ async def run_launcher(modules: Sequence[str], module_args: Dict[str, List[str]]
             *spec.extra_args,
             *module_args.get(name, []),
         ]
+        module_env = env.copy()
+        if name in module_displays:
+            module_env["DISPLAY"] = module_displays[name]
+            print(f"[launcher] overriding DISPLAY for {name}: {module_displays[name]}")
         print(f"[launcher] starting {name}: {format_command(args)}")
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=str(SRC_ROOT),
-                env=env,
+                env=module_env,
             )
         except FileNotFoundError as exc:
             print(f"[launcher] Failed to start {name}: {exc}")
@@ -196,6 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List registered modules and exit.",
     )
+    parser.add_argument(
+        "--rppg-display",
+        default=None,
+        help="Override DISPLAY value for the rppg module only (e.g. :99).",
+    )
     return parser
 
 
@@ -221,7 +235,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"Unknown module for --module-arg: {name}")
         module_args.setdefault(name, []).append(value)
 
-    return asyncio.run(run_launcher(selected_modules, module_args))
+    module_displays: Dict[str, str] = {}
+    if args.rppg_display:
+        module_displays["rppg"] = args.rppg_display
+
+    return asyncio.run(run_launcher(selected_modules, module_args, module_displays))
 
 
 if __name__ == "__main__":
