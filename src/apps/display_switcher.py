@@ -17,6 +17,11 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 SRC_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_EXECUTABLE = sys.executable
+CARECALL_VIDEO_ROOT = SRC_ROOT / "modules" / "display" / "display_for_carecall"
+DEFAULT_CARECALL_VIDEOS_PATH = (CARECALL_VIDEO_ROOT / "videos").resolve()
+LEGACY_CARECALL_VIDEOS_PATH = (CARECALL_VIDEO_ROOT / "video").resolve()
+if not DEFAULT_CARECALL_VIDEOS_PATH.exists() and LEGACY_CARECALL_VIDEOS_PATH.exists():
+    DEFAULT_CARECALL_VIDEOS_PATH = LEGACY_CARECALL_VIDEOS_PATH
 
 
 @dataclass
@@ -743,7 +748,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--carecall-videos",
-        default=str((SRC_ROOT / "modules" / "display" / "display_for_carecall" / "video").resolve()),
+        default=str(DEFAULT_CARECALL_VIDEOS_PATH),
         help="케어콜 전용 디스플레이에서 사용할 비디오 디렉터리",
     )
     parser.add_argument(
@@ -803,6 +808,13 @@ async def run(args: argparse.Namespace) -> int:
     env["PYTHONPATH"] = f"{src_path}{os.pathsep}{python_path}" if python_path else src_path
 
     sensor_cmd = [PYTHON_EXECUTABLE, "-m", "modules.display.sensor_display", *parse_extra_args(args.sensor_arg)]
+    carecall_videos_path = Path(args.carecall_videos)
+    if not carecall_videos_path.exists() and LEGACY_CARECALL_VIDEOS_PATH.exists():
+        print(f"[switcher] Carecall video directory not found: {carecall_videos_path}, falling back to legacy path: {LEGACY_CARECALL_VIDEOS_PATH}")
+        carecall_videos_path = LEGACY_CARECALL_VIDEOS_PATH
+    elif not carecall_videos_path.exists():
+        print(f"[switcher] WARNING: Carecall video directory does not exist: {carecall_videos_path}")
+
     carecall_cmd = [
         PYTHON_EXECUTABLE,
         "-m",
@@ -812,7 +824,7 @@ async def run(args: argparse.Namespace) -> int:
         "--topic",
         args.topic,
         "--videos",
-        args.carecall_videos,
+        str(carecall_videos_path),
         *parse_extra_args(args.carecall_arg),
     ]
 
