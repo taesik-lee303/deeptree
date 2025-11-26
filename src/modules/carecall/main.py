@@ -29,13 +29,14 @@ from modules.carecall.stt_tts.utils import ConversationManager, AIServerClient
 class DeepCareSystem:
     """DeepCare 통합 시스템"""
     
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: Optional[str] = None, skip_activation: bool = False):
         # 설정 로드
         if config_file:
             os.environ['DEEPCARE_CONFIG'] = config_file
 
         self.config = get_config()
         self.activation_cfg = self.config.activation
+        self.skip_activation = skip_activation
 
         # 로깅 설정
         setup_logging(level="INFO")
@@ -104,12 +105,15 @@ class DeepCareSystem:
         self.logger.info("Starting single conversation session...")
 
         try:
-            # 활성화 대기
-            self.logger.info("[Session] Waiting for activation...")
-            if not self.wait_for_activation():
-                self.logger.warning("[Session] Activation wait aborted, exiting")
-                return
-            self.logger.info("[Session] Activation completed, starting conversation...")
+            # 활성화 대기 (skip_activation이 True이면 건너뛰기)
+            if self.skip_activation:
+                self.logger.info("[Session] Skipping activation wait, starting conversation immediately...")
+            else:
+                self.logger.info("[Session] Waiting for activation...")
+                if not self.wait_for_activation():
+                    self.logger.warning("[Session] Activation wait aborted, exiting")
+                    return
+                self.logger.info("[Session] Activation completed, starting conversation...")
 
             # 대화 시작 전 STT가 실행 중이면 정리
             if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
@@ -555,6 +559,9 @@ def main():
     parser.add_argument('--mode', choices=['interactive', 'stt-only', 'test'],
                        default='interactive', help='실행 모드')
     
+    # 활성화 옵션
+    parser.add_argument('--skip-activation', action='store_true',
+                       help='트리거 없이 바로 케어콜 시작 (센서/호출어 대기 건너뛰기)')
     
     # 설정 파일
     parser.add_argument('--config', type=str,
@@ -610,7 +617,7 @@ def main():
     
     # 시스템 초기화 및 실행
     try:
-        system = DeepCareSystem(args.config)
+        system = DeepCareSystem(args.config, skip_activation=args.skip_activation)
         
         # 컴포넌트 초기화
         if not system.initialize_components():
@@ -620,13 +627,16 @@ def main():
         # 모드별 실행
         if args.mode == 'interactive':
             print("=== 대화형 모드 시작 ===")
-            wake_info = ", ".join(system.activation_cfg.wake_phrases or []) or "(호출어 미설정)"
-            print(
-                "소음 ≥ {threshold} & PIR 감지 또는 호출어 [{phrases}] 인식 시 케어콜이 시작됩니다.\n'Ctrl+C'로 종료할 수 있습니다.".format(
-                    threshold=system.activation_cfg.noise_threshold,
-                    phrases=wake_info,
+            if args.skip_activation:
+                print("트리거 없이 바로 케어콜을 시작합니다.\n'Ctrl+C'로 종료할 수 있습니다.")
+            else:
+                wake_info = ", ".join(system.activation_cfg.wake_phrases or []) or "(호출어 미설정)"
+                print(
+                    "소음 ≥ {threshold} & PIR 감지 또는 호출어 [{phrases}] 인식 시 케어콜이 시작됩니다.\n'Ctrl+C'로 종료할 수 있습니다.".format(
+                        threshold=system.activation_cfg.noise_threshold,
+                        phrases=wake_info,
+                    )
                 )
-            )
             system.run_interactive_mode()
             
         elif args.mode == 'stt-only':
