@@ -72,6 +72,7 @@ class MP4Player:
         self.state = PlayerState.IDLE
         self.current_process: Optional[subprocess.Popen] = None
         self.current_video: Optional[str] = None
+        self.current_video_config: Optional[VideoConfig] = None  # 현재 재생 중인 비디오 설정
         self.last_event_time: float = 0
         self.last_event_data: Optional[Dict] = None
 
@@ -349,12 +350,13 @@ class MP4Player:
             )
 
             self.current_video = config.file_path
+            self.current_video_config = config  # 현재 재생 중인 비디오 설정 저장
             self.state = PlayerState.PLAYING
 
             # 재생 완료 모니터링
             threading.Thread(
                 target=self._monitor_playback,
-                args=(self.current_process,),
+                args=(self.current_process, config),
                 daemon=True
             ).start()
 
@@ -394,15 +396,23 @@ class MP4Player:
         cmd.append(config.file_path)
         return cmd
 
-    def _monitor_playback(self, process: subprocess.Popen):
+    def _monitor_playback(self, process: subprocess.Popen, config: VideoConfig):
         """재생 모니터링"""
         try:
             process.wait()
             if process == self.current_process:
                 self.current_process = None
                 self.current_video = None
+                self.current_video_config = None
                 self.state = PlayerState.IDLE
                 self.logger.info("Video playback finished")
+                
+                # loop=True인 경우 다시 재생 (기본 화면 유지)
+                if config.loop and self.running:
+                    self.logger.info(f"Video has loop enabled, restarting: {config.file_path}")
+                    time.sleep(0.1)  # 짧은 대기 후 재시작
+                    if self.running and not self.current_process:  # 아직 실행 중이고 다른 비디오가 재생되지 않은 경우
+                        self._play_video(config)
         except Exception as e:
             self.logger.error(f"Playback monitoring error: {e}")
 
@@ -419,6 +429,7 @@ class MP4Player:
             finally:
                 self.current_process = None
                 self.current_video = None
+                self.current_video_config = None
                 self.state = PlayerState.STOPPED
 
     def add_event_handler(self, handler: Callable[[Dict], None]):
