@@ -20,6 +20,7 @@ class AudioConfig:
     pre_silence_ms: int = 300
     min_utterance_ms: int = 250
     end_silence_ms: int = 800
+    max_utterance_sec: float = 10.0  # 발화 최대 시간 (초)
     device_rate: int = 0  # 0이면 자동 감지
     use_raw_stream: bool = False
     input_device: Optional[str] = "hw:3,0"
@@ -142,6 +143,11 @@ class Config:
             self.audio.use_raw_stream = True
         if os.environ.get("SD_INPUT_DEVICE"):
             self.audio.input_device = os.environ.get("SD_INPUT_DEVICE")
+        if os.environ.get("CARECALL_MAX_UTTERANCE_SEC"):
+            try:
+                self.audio.max_utterance_sec = float(os.environ["CARECALL_MAX_UTTERANCE_SEC"])
+            except ValueError:
+                pass
         
         # OpenAI 설정
         if os.environ.get("OPENAI_API_KEY"):
@@ -186,6 +192,7 @@ class Config:
                 "pre_silence_ms": self.audio.pre_silence_ms,
                 "min_utterance_ms": self.audio.min_utterance_ms,
                 "end_silence_ms": self.audio.end_silence_ms,
+                "max_utterance_sec": self.audio.max_utterance_sec,
                 "device_rate": self.audio.device_rate,
                 "use_raw_stream": self.audio.use_raw_stream,
                 "input_device": self.audio.input_device

@@ -167,7 +167,9 @@ class VADAudioCapture:
             self.frame_ms = 20
         self.vad_frame_bytes = int(self.target_rate * (self.frame_ms / 1000.0)) * 2
         self.pre_max_bytes = int(self.target_rate * (self.audio_config.pre_silence_ms / 1000.0)) * 2
-        self.utterance_timeout_s = 10.0  # 발화 타임아웃 (10초)
+        # 발화 최대 시간 설정 (config에서 가져오거나 환경변수에서, 기본값 10초)
+        self.utterance_timeout_s = float(os.getenv("CARECALL_MAX_UTTERANCE_SEC", 
+                                                    str(getattr(self.audio_config, "max_utterance_sec", 10.0))))
 
         # 상태 변수
         self.is_capturing = False

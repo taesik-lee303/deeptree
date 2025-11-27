@@ -109,11 +109,11 @@ class DeepCareSystem:
             if self.skip_activation:
                 self.logger.info("[Session] Skipping activation wait, starting conversation immediately...")
             else:
-                self.logger.info("[Session] Waiting for activation...")
-                if not self.wait_for_activation():
-                    self.logger.warning("[Session] Activation wait aborted, exiting")
-                    return
-                self.logger.info("[Session] Activation completed, starting conversation...")
+            self.logger.info("[Session] Waiting for activation...")
+            if not self.wait_for_activation():
+                self.logger.warning("[Session] Activation wait aborted, exiting")
+                return
+            self.logger.info("[Session] Activation completed, starting conversation...")
 
             # 대화 시작 전 STT가 실행 중이면 정리
             if self.stt_manager and getattr(self.stt_manager, 'is_running', False):
@@ -630,13 +630,13 @@ def main():
             if args.skip_activation:
                 print("트리거 없이 바로 케어콜을 시작합니다.\n'Ctrl+C'로 종료할 수 있습니다.")
             else:
-                wake_info = ", ".join(system.activation_cfg.wake_phrases or []) or "(호출어 미설정)"
-                print(
-                    "소음 ≥ {threshold} & PIR 감지 또는 호출어 [{phrases}] 인식 시 케어콜이 시작됩니다.\n'Ctrl+C'로 종료할 수 있습니다.".format(
-                        threshold=system.activation_cfg.noise_threshold,
-                        phrases=wake_info,
-                    )
+            wake_info = ", ".join(system.activation_cfg.wake_phrases or []) or "(호출어 미설정)"
+            print(
+                "소음 ≥ {threshold} & PIR 감지 또는 호출어 [{phrases}] 인식 시 케어콜이 시작됩니다.\n'Ctrl+C'로 종료할 수 있습니다.".format(
+                    threshold=system.activation_cfg.noise_threshold,
+                    phrases=wake_info,
                 )
+            )
             system.run_interactive_mode()
             
         elif args.mode == 'stt-only':
