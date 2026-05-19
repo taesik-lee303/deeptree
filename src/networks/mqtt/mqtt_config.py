@@ -9,8 +9,8 @@ import os
 
 @dataclass
 class MqttSettings:
-    host: str = os.getenv("MQTT_HOST", "203.250.148.52")
-    port: int = int(os.getenv("MQTT_PORT", "20516"))
+    host: str = os.getenv("MQTT_HOST", "host")
+    port: int = int(os.getenv("MQTT_PORT", "port"))
     topic_base: str = os.getenv("MQTT_TOPIC_BASE", "taesik/therapy").rstrip("/")
     username: str | None = os.getenv("MQTT_USERNAME") or None
     password: str | None = os.getenv("MQTT_PASSWORD") or None
