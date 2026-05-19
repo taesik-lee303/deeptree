@@ -35,7 +35,7 @@ class WhisperConfig:
 @dataclass
 class OpenAIConfig:
     """OpenAI API 설정"""
-    api_key: str = "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"
+    api_key: str = ""
     tts_model: str = "tts-1"
     tts_voice: str = "nova"
     whisper_model: str = "whisper-1"
@@ -44,7 +44,7 @@ class OpenAIConfig:
 @dataclass
 class ServerConfig:
     """DeepCare API 서버 설정"""
-    base_url: str = "https://deepcare-api.thedeeplabs.com/api"
+    base_url: str = ""
     timeout: int = 30
     max_retries: int = 3
     retry_delay: int = 1
