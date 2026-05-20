@@ -2,6 +2,10 @@
 
 Raspberry Pi와 Raspberry Pi Pico WH 기반의 IoT 케어 시스템입니다. 센서 데이터 수집, Thermal rPPG 생체신호 측정, CareCall 음성 인터랙션, 감정 기반 Display/LED 피드백을 하나의 엣지 시스템으로 통합했습니다.
 
+## Prototype
+
+![DeepTree packaged prototype](docs/assets/prototype_packaged_view.jpg)
+
 ## Project Overview
 
 - **목적**: 돌봄 환경에서 사용자 상태와 주변 환경을 수집하고, 음성 대화와 시각 피드백을 제공하는 엣지 케어 시스템 구현

@@ -12,6 +12,16 @@ DeepTree는 Raspberry Pi 기반 엣지 디바이스에서 센서 데이터, 음�
 - **주요 하드웨어**: Raspberry Pi 5, Raspberry Pi Pico WH, Thermal Camera, PIR Sensor, Air Sensor, Temperature/Humidity Sensor, Sound Sensor, Display, LED Module
 - **펌웨어**: 센서 수집 Pico WH 펌웨어, 스마트 조명/LED 제어 Pico W 펌웨어
 
+## Prototype Photos
+
+완성 패키징 상태의 프로토타입입니다. CareTree 본체와 스마트 조명 모듈이 함께 동작하는 구성을 보여줍니다.
+
+![DeepTree packaged prototype](assets/prototype_packaged_view.jpg)
+
+내부 구조 확인용 사진입니다. 본체 내부의 Raspberry Pi, 배선, 센서/입출력 연결 상태를 확인할 수 있습니다.
+
+![DeepTree internal prototype view](assets/prototype_internal_view.jpg)
+
 ## My Contribution
 
 - Raspberry Pi와 Pico WH를 중심으로 한 전체 하드웨어 아키텍처 설계
