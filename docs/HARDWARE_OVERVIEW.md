@@ -10,12 +10,14 @@ DeepTree는 Raspberry Pi 기반 엣지 디바이스에서 센서 데이터, 음�
 - **핵심 기능**: 센서 데이터 수집, Thermal rPPG 생체신호 측정, CareCall 음성 인터랙션, 감정 기반 LED/Display 제어
 - **주요 통신 방식**: MQTT, Kafka, UART
 - **주요 하드웨어**: Raspberry Pi 5, Raspberry Pi Pico WH, Thermal Camera, PIR Sensor, Air Sensor, Temperature/Humidity Sensor, Sound Sensor, Display, LED Module
+- **펌웨어**: 센서 수집 Pico WH 펌웨어, 스마트 조명/LED 제어 Pico W 펌웨어
 
 ## My Contribution
 
 - Raspberry Pi와 Pico WH를 중심으로 한 전체 하드웨어 아키텍처 설계
 - 센서 데이터가 UART, MQTT, Kafka를 통해 이동하는 데이터 흐름 정리
 - Thermal rPPG, CareCall, Display, LED 모듈 간 연동 구조 설계
+- 센서 수집 Pico 및 LED 제어 Pico 펌웨어 구성
 - 프로젝트 설명을 위한 시스템 아키텍처 및 데이터 플로우 다이어그램 작성
 
 ## Hardware Architecture
@@ -31,6 +33,7 @@ DeepTree는 Raspberry Pi 기반 엣지 디바이스에서 센서 데이터, 음�
 - CareCall 모듈은 마이크 입력, STT/TTS, 대화 관리, 서버 연동을 담당합니다.
 - Kafka pipeline은 내부 모듈 간 센서 및 상태 이벤트 전달에 사용됩니다.
 - Pico WH는 센서 입력과 LED 모듈 제어를 담당하며 MQTT/UART로 Raspberry Pi 및 서버와 연결됩니다.
+- `firmware/sensor_pico/`와 `firmware/lighting_pico/`에 Pico 펌웨어 코드를 분리해 두었습니다.
 
 ## Hardware Data Flow
 
@@ -61,6 +64,8 @@ DeepTree는 Raspberry Pi 기반 엣지 디바이스에서 센서 데이터, 음�
 - `src/modules/display/`: 센서/감정 상태 표시 모듈
 - `src/networks/`: Kafka, MQTT, UART 통신 모듈
 - `src/test/`: 센서, 커넥터, Kafka 파이프라인 테스트 코드
+- `firmware/sensor_pico/`: 센서 데이터 수집 및 UART/MQTT 전송 Pico 펌웨어
+- `firmware/lighting_pico/`: MQTT 기반 NeoPixel 스마트 조명 제어 Pico 펌웨어
 - `docs/`: 시스템 구성, 문제 해결, 최적화 문서
 
 ## Notes for Reviewers

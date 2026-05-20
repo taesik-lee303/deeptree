@@ -1,1 +1,4 @@
 /src/modules/carecall/config.py
+__pycache__/
+*.pyc
+firmware/**/config_local.py

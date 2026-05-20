@@ -8,6 +8,7 @@ Raspberry Pi와 Raspberry Pi Pico WH 기반의 IoT 케어 시스템입니다. �
 - **핵심 기능**: 센서 데이터 수집, 비접촉 생체신호 측정, CareCall 음성 인터랙션, 감정/상태 기반 화면 및 LED 제어
 - **주요 하드웨어**: Raspberry Pi 5, Raspberry Pi Pico WH, Thermal Camera, PIR Sensor, Air Sensor, Temperature/Humidity Sensor, Sound Sensor, Display, LED Module
 - **주요 통신 방식**: MQTT, Kafka, UART
+- **펌웨어 구성**: 센서 수집 Pico WH, 스마트 조명/LED 제어 Pico W
 
 ## Architecture
 
@@ -20,6 +21,7 @@ Raspberry Pi와 Raspberry Pi Pico WH 기반의 IoT 케어 시스템입니다. �
 - Raspberry Pi 5와 Pico WH를 중심으로 한 하드웨어/소프트웨어 연동 구조 설계
 - 센서 데이터가 UART, MQTT, Kafka를 통해 이동하는 데이터 흐름 정리
 - Thermal rPPG, CareCall, Display, LED 모듈 간 연동 구조 구현 및 문서화
+- 센서 수집 Pico 및 LED 제어 Pico 펌웨어 구성
 - 프로젝트 설명을 위한 시스템 아키텍처 및 데이터 플로우 다이어그램 작성
 
 ## Tech Stack
@@ -40,6 +42,9 @@ src/
     display/    # Sensor and emotion display
   networks/     # Kafka, MQTT, UART communication
   test/         # Sensor, connector, and pipeline tests
+firmware/
+  sensor_pico/    # Pico W sensor collection firmware
+  lighting_pico/  # Pico W NeoPixel lighting firmware
 docs/
   HARDWARE_OVERVIEW.md
   assets/
