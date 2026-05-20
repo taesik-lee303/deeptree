@@ -4,7 +4,7 @@ Raspberry Pi와 Raspberry Pi Pico WH 기반의 IoT 케어 시스템입니다. �
 
 ## Prototype
 
-![DeepTree packaged prototype](docs/assets/prototype_packaged_view.jpg)
+<img src="docs/assets/prototype_packaged_view.jpg" alt="DeepTree packaged prototype" width="420">
 
 ## Project Overview
 

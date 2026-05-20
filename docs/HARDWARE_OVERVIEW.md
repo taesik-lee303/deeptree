@@ -16,11 +16,11 @@ DeepTree는 Raspberry Pi 기반 엣지 디바이스에서 센서 데이터, 음�
 
 완성 패키징 상태의 프로토타입입니다. CareTree 본체와 스마트 조명 모듈이 함께 동작하는 구성을 보여줍니다.
 
-![DeepTree packaged prototype](assets/prototype_packaged_view.jpg)
+<img src="assets/prototype_packaged_view.jpg" alt="DeepTree packaged prototype" width="420">
 
 내부 구조 확인용 사진입니다. 본체 내부의 Raspberry Pi, 배선, 센서/입출력 연결 상태를 확인할 수 있습니다.
 
-![DeepTree internal prototype view](assets/prototype_internal_view.jpg)
+<img src="assets/prototype_internal_view.jpg" alt="DeepTree internal prototype view" width="420">
 
 ## My Contribution
 
