@@ -1,6 +1,7 @@
 # DeepTree
 
 Raspberry Pi와 Raspberry Pi Pico WH 기반의 IoT 케어 시스템입니다. 센서 데이터 수집, Thermal rPPG 생체신호 측정, CareCall 음성 인터랙션, 감정 기반 Display/LED 피드백을 하나의 엣지 시스템으로 통합했습니다.
+https://github.com/taesik-lee303/deeptree/edit/CO_SHOW_PROJECT
 
 ## Prototype
 
